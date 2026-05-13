@@ -7,28 +7,70 @@ interface SlideContent {
   body: string[];
 }
 
-/** Look up or create "01 Generated Proposals" subfolder under the root folder. */
+/** Look up a subfolder by name */
+async function getFolderId(accessToken: string, name: string): Promise<string | null> {
+  if (!DRIVE_ROOT_FOLDER) return null;
+  const res = await fetch(
+    "https://www.googleapis.com/drive/v3/files?q=" +
+      encodeURIComponent(
+        `mimeType='application/vnd.google-apps.folder' and '${DRIVE_ROOT_FOLDER}' in parents and name='${name}' and trashed=false`
+      ) +
+      "&fields=files(id)",
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  const data = (await res.json()) as { files?: { id: string }[] };
+  return data.files?.[0]?.id || null;
+}
+
+/** Find the first PPTX template in "03 Templates" and copy-convert it */
+async function copyTemplate(
+  accessToken: string
+): Promise<{ presentationId: string; title: string } | null> {
+  const folderId = await getFolderId(accessToken, "03 Templates");
+  if (!folderId) return null;
+
+  // Find first PPTX file
+  const res = await fetch(
+    "https://www.googleapis.com/drive/v3/files?q=" +
+      encodeURIComponent(
+        `mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' and '${folderId}' in parents and trashed=false`
+      ) +
+      "&fields=files(id,name)&pageSize=1",
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  const data = (await res.json()) as { files?: { id: string; name: string }[] };
+  const templateFile = data.files?.[0];
+  if (!templateFile) return null;
+
+  // Copy-convert to Google Slides
+  const copyRes = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${templateFile.id}/copy`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: `[TEMP] ${templateFile.name}`,
+        mimeType: "application/vnd.google-apps.presentation",
+      }),
+    }
+  );
+  const copyData = (await copyRes.json()) as { id?: string };
+  if (!copyData.id) return null;
+
+  return { presentationId: copyData.id, title: templateFile.name };
+}
+
+/** Look up or create "01 Generated Proposals" subfolder */
 async function getGeneratedProposalsFolderId(
   accessToken: string,
   rootFolderId: string
 ): Promise<string> {
-  // Search for existing subfolder
-  const searchRes = await fetch(
-    "https://www.googleapis.com/drive/v3/files?q=" +
-      encodeURIComponent(
-        `mimeType='application/vnd.google-apps.folder' and ` +
-          `'${rootFolderId}' in parents and ` +
-          `name='01 Generated Proposals' and trashed=false`
-      ) +
-      "&spaces=drive&fields=files(id,name)",
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  const searchData = (await searchRes.json()) as { files?: { id: string; name: string }[] };
-  if (searchData.files && searchData.files.length > 0) {
-    return searchData.files[0].id;
-  }
+  const existing = await getFolderId(accessToken, "01 Generated Proposals");
+  if (existing) return existing;
 
-  // Create the subfolder
   const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
     method: "POST",
     headers: {
@@ -69,46 +111,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const presentationTitle =
     title || `${prospectCompany || prospectName || "Partner"} x Brinc Proposal`;
 
-  try {
-    // ---- 1. Create blank presentation ----
-    const createRes = await fetch(
-      "https://slides.googleapis.com/v1/presentations",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ title: presentationTitle }),
-      }
-    );
+  let presentationId: string;
+  let usedTemplate = false;
 
-    const presentation = (await createRes.json()) as Record<string, any>;
-    if (!createRes.ok) {
-      console.error("[Slides] Create error:", presentation);
-      return res.status(400).json({
-        error:
-          presentation.error?.message || "Failed to create presentation",
-      });
+  try {
+    // ---- 1. Template-first: try to copy from 03 Templates ----
+    const template = await copyTemplate(accessToken);
+    if (template) {
+      usedTemplate = true;
+      presentationId = template.presentationId;
+      // Rename to proposal title
+      await fetch(
+        `https://www.googleapis.com/drive/v3/files/${presentationId}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ name: presentationTitle }),
+        }
+      );
+    } else {
+      // Fallback: create blank
+      const createRes = await fetch(
+        "https://slides.googleapis.com/v1/presentations",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ title: presentationTitle }),
+        }
+      );
+      const presData = (await createRes.json()) as any;
+      if (!createRes.ok) {
+        return res.status(400).json({
+          error: presData.error?.message || "Failed to create presentation",
+        });
+      }
+      presentationId = presData.presentationId;
     }
 
-    const presentationId = presentation.presentationId as string;
-    const firstSlideId = presentation.slides?.[0]?.objectId as string;
+    // ---- 2. Get current slide structure ----
+    const stateRes = await fetch(
+      `https://slides.googleapis.com/v1/presentations/${presentationId}?fields=presentationId,title,slides(objectId,pageElements(objectId,shape(placeholder(type))))`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const presState = (await stateRes.json()) as any;
+    const existingSlides: any[] = presState.slides || [];
 
-    // ---- 2. Build all slide content ----
+    // ---- 3. Build content ----
     const contentSlides: SlideContent[] = [];
 
-    if (suggestedAngle) {
-      contentSlides.push({
-        title: "Strategic Context",
-        body: [suggestedAngle],
-      });
-    }
+    contentSlides.push({
+      title: "Strategic Context",
+      body: suggestedAngle
+        ? suggestedAngle.split("\n").filter((s: string) => s.trim())
+        : ["Building on our strategic alignment and shared vision for innovation."],
+    });
 
     if (offerings && offerings.length > 0) {
       contentSlides.push({
         title: "Proposed Collaboration",
-        body: offerings.map((o: string) => `\u2022 ${o}`),
+        body: [
+          `A tailored engagement between ${prospectCompany || prospectName || "your organization"} and Brinc:`,
+          ...offerings.map((o: string) => `\u2022 ${o}`),
+        ],
       });
     }
 
@@ -148,30 +218,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ],
     });
 
-    // ---- 3. Build batchUpdate requests ----
+    // ---- 4. Build batchUpdate ----
     const requests: any[] = [];
     const now = Date.now();
 
-    // --- Title slide: populate existing placeholders ---
-    if (firstSlideId) {
-      const firstSlide = presentation.slides[0];
-      const titleBox = firstSlide.pageElements?.find(
-        (e: any) => e.shape?.placeholder?.type === "TITLE"
+    // Cover slide: populate placeholders
+    if (existingSlides.length > 0) {
+      const firstSlide = existingSlides[0];
+      const elements = firstSlide.pageElements || [];
+      const titleBox = elements.find(
+        (e: any) =>
+          e.shape?.placeholder?.type === "TITLE" ||
+          e.shape?.placeholder?.type === "CENTERED_TITLE"
       );
-      const subtitleBox = firstSlide.pageElements?.find(
+      const subtitleBox = elements.find(
         (e: any) => e.shape?.placeholder?.type === "SUBTITLE"
       );
 
       if (titleBox) {
         requests.push({
+          deleteText: {
+            objectId: titleBox.objectId,
+            textRange: { type: "ALL" },
+          },
+        });
+        requests.push({
           insertText: {
             objectId: titleBox.objectId,
-            text:
-              prospectCompany || prospectName || "Partnership Proposal",
+            text: prospectCompany || prospectName || "Partnership Proposal",
           },
         });
       }
       if (subtitleBox) {
+        requests.push({
+          deleteText: {
+            objectId: subtitleBox.objectId,
+            textRange: { type: "ALL" },
+          },
+        });
         requests.push({
           insertText: {
             objectId: subtitleBox.objectId,
@@ -181,14 +265,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // --- Content slides ---
+    // Content slides
     for (let i = 0; i < contentSlides.length; i++) {
       const slideId = `slide_${now}_${i}`;
       const titleBoxId = `title_${now}_${i}`;
       const bodyBoxId = `body_${now}_${i}`;
       const slide = contentSlides[i];
 
-      // 3a. Create blank slide
       requests.push({
         createSlide: {
           objectId: slideId,
@@ -196,7 +279,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       });
 
-      // 3b. Create title text box
       requests.push({
         createShape: {
           objectId: titleBoxId,
@@ -207,7 +289,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               width: { magnitude: 620, unit: "PT" },
               height: { magnitude: 50, unit: "PT" },
             },
-            // Transform: plain numbers (points), NOT {magnitude, unit} objects
             transform: {
               scaleX: 1,
               scaleY: 1,
@@ -219,15 +300,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       });
 
-      // 3c. Insert title text
       requests.push({
-        insertText: {
-          objectId: titleBoxId,
-          text: slide.title,
-        },
+        insertText: { objectId: titleBoxId, text: slide.title },
       });
-
-      // 3d. Style title text
       requests.push({
         updateTextStyle: {
           objectId: titleBoxId,
@@ -244,7 +319,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       });
 
-      // 3e. Create body text box
       if (slide.body.length > 0) {
         requests.push({
           createShape: {
@@ -266,16 +340,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             },
           },
         });
-
-        // 3f. Insert body text
         requests.push({
           insertText: {
             objectId: bodyBoxId,
             text: slide.body.join("\n"),
           },
         });
-
-        // 3g. Style body text
         requests.push({
           updateTextStyle: {
             objectId: bodyBoxId,
@@ -293,8 +363,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // ---- 4. Apply batchUpdate ----
-    console.log("[Slides] Sending batchUpdate with", requests.length, "requests");
+    // ---- 5. Apply batchUpdate ----
+    console.log(
+      `[Slides] template=${usedTemplate}, requests=${requests.length}`
+    );
 
     const batchRes = await fetch(
       `https://slides.googleapis.com/v1/presentations/${presentationId}:batchUpdate`,
@@ -309,58 +381,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     const batchData = (await batchRes.json()) as Record<string, any>;
-
     if (!batchRes.ok) {
-      console.error("[Slides] BatchUpdate failed:", JSON.stringify(batchData, null, 2));
-      // Delete the blank presentation since batch failed
+      console.error("[Slides] Batch failed:", JSON.stringify(batchData));
       await fetch(
         `https://www.googleapis.com/drive/v3/files/${presentationId}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
+        { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
       );
       return res.status(400).json({
-        error: batchData.error?.message || "Failed to add content to slides",
+        error: batchData.error?.message || "Failed to add content",
         details: batchData,
       });
     }
 
-    // Log any partial failures (warnings) from batchUpdate
-    if (batchData.replies) {
-      const errors = batchData.replies.filter((r: any) => r.error);
-      if (errors.length > 0) {
-        console.warn("[Slides] BatchUpdate partial failures:", errors);
-      }
-    }
-
-    // ---- 5. Move to Drive folder ----
+    // ---- 6. Move to 01 Generated Proposals ----
+    let folderPath = "";
     if (DRIVE_ROOT_FOLDER) {
       try {
         const targetFolderId = await getGeneratedProposalsFolderId(
           accessToken,
           DRIVE_ROOT_FOLDER
         );
-
         await fetch(
           `https://www.googleapis.com/drive/v3/files/${presentationId}?addParents=${targetFolderId}&removeParents=root`,
-          {
-            method: "PATCH",
-            headers: { Authorization: `Bearer ${accessToken}` },
-          }
+          { method: "PATCH", headers: { Authorization: `Bearer ${accessToken}` } }
         );
-      } catch (folderErr: any) {
-        console.warn("[Slides] Folder move warning:", folderErr.message);
-        // Non-fatal: still return the presentation link
+        folderPath = "01 Generated Proposals";
+      } catch (e: any) {
+        console.warn("[Slides] Move warning:", e.message);
       }
     }
 
-    // ---- 6. Return result ----
+    // ---- 7. Return ----
     return res.status(200).json({
       presentationId,
       title: presentationTitle,
       webViewLink: `https://docs.google.com/presentation/d/${presentationId}/edit`,
-      slideCount: contentSlides.length + 1, // +1 for title slide
+      slideCount: contentSlides.length + 1,
+      usedTemplate,
+      folderPath,
     });
   } catch (err: any) {
     console.error("[Slides] Error:", err);

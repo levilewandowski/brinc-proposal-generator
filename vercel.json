@@ -14,6 +14,14 @@
       "destination": "/api/google/slides"
     },
     {
+      "source": "/api/google/drive",
+      "destination": "/api/google/drive"
+    },
+    {
+      "source": "/api/google/library",
+      "destination": "/api/google/library"
+    },
+    {
       "source": "/api/health",
       "destination": "/api/health"
     },
