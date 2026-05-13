@@ -35,6 +35,7 @@ export default function ProposalView() {
       toast.error("Please connect your Google account first");
       return;
     }
+    const refreshToken = localStorage.getItem("brinc_google_refresh_token") || "";
     try {
       setCreating(true);
       toast.info("Creating Google Slides presentation...");
@@ -44,6 +45,7 @@ export default function ProposalView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accessToken,
+          refreshToken,
           prospectName: proposal.prospectName,
           prospectCompany: proposal.prospectCompany,
           offerings,

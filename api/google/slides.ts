@@ -1,10 +1,35 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 const DRIVE_ROOT_FOLDER = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 
 interface SlideContent {
   title: string;
   body: string[];
+}
+
+/** Refresh an expired access token using the refresh token */
+async function refreshAccessToken(refreshToken: string): Promise<string | null> {
+  try {
+    const res = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        refresh_token: refreshToken,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        grant_type: "refresh_token",
+      }),
+    });
+    const data = (await res.json()) as { access_token?: string; error?: string };
+    if (data.access_token) return data.access_token;
+    console.error("[Token Refresh] Failed:", data.error);
+    return null;
+  } catch (err: any) {
+    console.error("[Token Refresh] Error:", err.message);
+    return null;
+  }
 }
 
 /** Look up a subfolder by name */
@@ -93,8 +118,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const {
+  let {
     accessToken,
+    refreshToken,
     title,
     prospectName,
     prospectCompany,
@@ -113,6 +139,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   let presentationId: string;
   let usedTemplate = false;
+
+  // ---- Token validation: refresh if expired ----
+  if (refreshToken) {
+    const checkRes = await fetch(
+      `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${accessToken}`
+    );
+    if (!checkRes.ok) {
+      const newToken = await refreshAccessToken(refreshToken);
+      if (newToken) accessToken = newToken;
+    }
+  }
 
   try {
     // ---- 1. Template-first: try to copy from 03 Templates ----
