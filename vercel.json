@@ -2,29 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
-  "framework": "vite",
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "/api/index"
-    }
-  ]
-}
- },
-    {
-      "source": "/api/trpc/:path*",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/api/google/save",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/api/health",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/((?!api/).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
