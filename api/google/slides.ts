@@ -222,7 +222,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const requests: any[] = [];
     const now = Date.now();
 
-    // Cover slide: populate placeholders
+    // Cover slide: populate placeholders (use insertText only — deleteText fails on empty shapes)
     if (existingSlides.length > 0) {
       const firstSlide = existingSlides[0];
       const elements = firstSlide.pageElements || [];
@@ -235,30 +235,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         (e: any) => e.shape?.placeholder?.type === "SUBTITLE"
       );
 
+      // Use insertText with insertionIndex: 0 to overwrite any placeholder text
       if (titleBox) {
-        requests.push({
-          deleteText: {
-            objectId: titleBox.objectId,
-            textRange: { type: "ALL" },
-          },
-        });
         requests.push({
           insertText: {
             objectId: titleBox.objectId,
+            insertionIndex: 0,
             text: prospectCompany || prospectName || "Partnership Proposal",
           },
         });
       }
       if (subtitleBox) {
         requests.push({
-          deleteText: {
-            objectId: subtitleBox.objectId,
-            textRange: { type: "ALL" },
-          },
-        });
-        requests.push({
           insertText: {
             objectId: subtitleBox.objectId,
+            insertionIndex: 0,
             text: `Prepared by Brinc | ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`,
           },
         });
