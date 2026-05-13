@@ -9,7 +9,6 @@ import { Checkbox } from "../components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Separator } from "../components/ui/separator";
 import { Badge } from "../components/ui/badge";
-import { trpc } from "../providers/trpc";
 import {
   FileText, Briefcase, User, Mail, Linkedin, Building2,
   Sparkles, Plus, Loader2, ChevronRight, Archive, Library,
@@ -31,6 +30,10 @@ const CASE_STUDY_OPTIONS = [
   "Bahrain EDB", "Oman Accelerator",
 ];
 
+// Hardcoded to match Google Cloud OAuth credential
+const GOOGLE_CLIENT_ID = "711074142580-2lh3uth8dn38hjmoth12roi8uomdaak2.apps.googleusercontent.com";
+const GOOGLE_REDIRECT_URI = "https://brinc-proposal-generator.vercel.app/api/google/callback";
+
 export default function Home() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -51,14 +54,13 @@ export default function Home() {
   });
   const [connecting, setConnecting] = useState(false);
 
-  // Handle Google OAuth callback
+  // Handle Google OAuth callback — client-side PKCE token exchange
   useEffect(() => {
     const code = searchParams.get("google_code");
     const error = searchParams.get("google_error");
 
     if (error) {
       toast.error(`Google auth failed: ${error}`);
-      // Clean up URL
       navigate("/", { replace: true });
       return;
     }
@@ -72,18 +74,42 @@ export default function Home() {
       return;
     }
 
-    // Exchange code for tokens via tRPC
     setConnecting(true);
-    toast.info("Completing Google connection...");
+    toast.info("Connecting to Google...");
 
-    trpc.google.handleCallback
-      .mutate({ code, state: "", codeVerifier: verifier })
-      .then((result) => {
-        if (result.email) {
-          localStorage.setItem("brinc_google_email", result.email);
-          setGoogleEmail(result.email);
-          toast.success(`Connected: ${result.email}`);
+    // Exchange code for tokens client-side (PKCE)
+    fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: GOOGLE_REDIRECT_URI,
+        grant_type: "authorization_code",
+        code_verifier: verifier,
+      }),
+    })
+      .then((res) => res.json())
+      .then((tokens: any) => {
+        if (tokens.error) {
+          throw new Error(tokens.error_description || tokens.error);
         }
+        // Get user info
+        return fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+        })
+          .then((res) => res.json())
+          .then((userInfo: any) => {
+            if (userInfo.email) {
+              localStorage.setItem("brinc_google_email", userInfo.email);
+              localStorage.setItem("brinc_google_access_token", tokens.access_token);
+              localStorage.setItem("brinc_google_refresh_token", tokens.refresh_token || "");
+              setGoogleEmail(userInfo.email);
+              toast.success(`Connected: ${userInfo.email}`);
+            } else {
+              throw new Error("No email in user info");
+            }
+          });
       })
       .catch((err) => {
         toast.error(err.message || "Failed to connect Google account");
@@ -142,15 +168,22 @@ export default function Home() {
         .replace(/\//g, "_")
         .replace(/=+$/, "");
 
-      // Get auth URL from backend (uses env vars for client_id and correct redirect_uri)
-      const { authUrl } = await trpc.google.getAuthUrl.query();
+      const scopes = encodeURIComponent(
+        "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/presentations"
+      );
 
-      // Append PKCE parameters to the backend-constructed URL
-      const url = new URL(authUrl);
-      url.searchParams.set("code_challenge", challenge);
-      url.searchParams.set("code_challenge_method", "S256");
+      const url =
+        `https://accounts.google.com/o/oauth2/v2/auth` +
+        `?client_id=${GOOGLE_CLIENT_ID}` +
+        `&redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_URI)}` +
+        `&response_type=code` +
+        `&scope=${scopes}` +
+        `&access_type=offline` +
+        `&prompt=consent` +
+        `&code_challenge=${challenge}` +
+        `&code_challenge_method=S256`;
 
-      window.location.href = url.toString();
+      window.location.href = url;
     } catch (err: any) {
       toast.error(err.message || "Failed to start Google auth");
       setConnecting(false);
