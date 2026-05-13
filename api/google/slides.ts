@@ -88,30 +88,7 @@ async function copyTemplate(
   return { presentationId: copyData.id, title: templateFile.name };
 }
 
-/** Look up or create "01 Generated Proposals" subfolder */
-async function getGeneratedProposalsFolderId(
-  accessToken: string,
-  rootFolderId: string
-): Promise<string> {
-  const existing = await getFolderId(accessToken, "01 Generated Proposals");
-  if (existing) return existing;
 
-  const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      name: "01 Generated Proposals",
-      mimeType: "application/vnd.google-apps.folder",
-      parents: [rootFolderId],
-    }),
-  });
-  const folder = (await createRes.json()) as { id?: string };
-  if (!folder.id) throw new Error("Failed to create '01 Generated Proposals' folder");
-  return folder.id;
-}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
@@ -423,20 +400,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ---- 6. Move to 01 Generated Proposals ----
     let folderPath = "";
-    if (DRIVE_ROOT_FOLDER) {
+    const hasRootFolder = !!DRIVE_ROOT_FOLDER;
+    console.log("[Slides] Folder move:", { hasRootFolder, rootFolder: DRIVE_ROOT_FOLDER?.substring(0, 10) + "..." });
+
+    if (hasRootFolder) {
       try {
-        const targetFolderId = await getGeneratedProposalsFolderId(
-          accessToken,
-          DRIVE_ROOT_FOLDER
-        );
-        await fetch(
+        // Find or create the target subfolder
+        let targetFolderId = await getFolderId(accessToken, "01 Generated Proposals");
+        if (!targetFolderId) {
+          // Create under the configured root folder
+          const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              name: "01 Generated Proposals",
+              mimeType: "application/vnd.google-apps.folder",
+              parents: [DRIVE_ROOT_FOLDER],
+            }),
+          });
+          const folderData = (await createRes.json()) as { id?: string; error?: any };
+          if (!folderData.id) {
+            throw new Error(`Folder creation failed: ${JSON.stringify(folderData.error)}`);
+          }
+          targetFolderId = folderData.id;
+          console.log("[Slides] Created folder:", targetFolderId);
+        } else {
+          console.log("[Slides] Found existing folder:", targetFolderId);
+        }
+
+        // Move the file: add to target folder, remove from root
+        const moveRes = await fetch(
           `https://www.googleapis.com/drive/v3/files/${presentationId}?addParents=${targetFolderId}&removeParents=root`,
           { method: "PATCH", headers: { Authorization: `Bearer ${accessToken}` } }
         );
+        if (!moveRes.ok) {
+          const moveErr = await moveRes.json();
+          console.error("[Slides] Move failed:", moveErr);
+          throw new Error(moveErr.error?.message || `Move HTTP ${moveRes.status}`);
+        }
+        console.log("[Slides] File moved to 01 Generated Proposals");
         folderPath = "01 Generated Proposals";
       } catch (e: any) {
-        console.warn("[Slides] Move warning:", e.message);
+        console.error("[Slides] Folder move error:", e.message);
       }
+    } else {
+      console.warn("[Slides] GOOGLE_DRIVE_FOLDER_ID not set, file stays in Drive root");
     }
 
     // ---- 7. Return ----
@@ -447,6 +458,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       slideCount: contentSlides.length + 1,
       usedTemplate,
       folderPath,
+      hasRootFolder,
     });
   } catch (err: any) {
     console.error("[Slides] Error:", err);
