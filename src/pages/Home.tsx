@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Toaster, toast } from "sonner";
 import { Button } from "../components/ui/button";
@@ -9,6 +9,7 @@ import { Checkbox } from "../components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Separator } from "../components/ui/separator";
 import { Badge } from "../components/ui/badge";
+import { trpc } from "../providers/trpc";
 import {
   FileText, Briefcase, User, Mail, Linkedin, Building2,
   Sparkles, Plus, Loader2, ChevronRight, Archive, Library,
@@ -32,6 +33,7 @@ const CASE_STUDY_OPTIONS = [
 
 export default function Home() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [proposalType, setProposalType] = useState<"quick" | "full">("quick");
   const [prospectName, setProspectName] = useState("");
   const [prospectEmail, setProspectEmail] = useState("");
@@ -44,7 +46,54 @@ export default function Home() {
   const [includeCaseStudies, setIncludeCaseStudies] = useState(false);
   const [otherNotes, setOtherNotes] = useState("");
   const [showLibrary, setShowLibrary] = useState(false);
-  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(() => {
+    return localStorage.getItem("brinc_google_email");
+  });
+  const [connecting, setConnecting] = useState(false);
+
+  // Handle Google OAuth callback
+  useEffect(() => {
+    const code = searchParams.get("google_code");
+    const error = searchParams.get("google_error");
+
+    if (error) {
+      toast.error(`Google auth failed: ${error}`);
+      // Clean up URL
+      navigate("/", { replace: true });
+      return;
+    }
+
+    if (!code) return;
+
+    const verifier = sessionStorage.getItem("google_pkce_verifier");
+    if (!verifier) {
+      toast.error("OAuth session expired. Please try again.");
+      navigate("/", { replace: true });
+      return;
+    }
+
+    // Exchange code for tokens via tRPC
+    setConnecting(true);
+    toast.info("Completing Google connection...");
+
+    trpc.google.handleCallback
+      .mutate({ code, state: "", codeVerifier: verifier })
+      .then((result) => {
+        if (result.email) {
+          localStorage.setItem("brinc_google_email", result.email);
+          setGoogleEmail(result.email);
+          toast.success(`Connected: ${result.email}`);
+        }
+      })
+      .catch((err) => {
+        toast.error(err.message || "Failed to connect Google account");
+      })
+      .finally(() => {
+        setConnecting(false);
+        sessionStorage.removeItem("google_pkce_verifier");
+        navigate("/", { replace: true });
+      });
+  }, [searchParams, navigate]);
 
   const toggleOffering = (offering: string) => {
     setSelectedOfferings((prev) =>
@@ -74,8 +123,43 @@ export default function Home() {
     navigate(`/proposal/${mockId}`);
   };
 
+  const handleConnectGoogle = async () => {
+    try {
+      setConnecting(true);
+
+      // Generate PKCE verifier
+      const verifier = Array.from(crypto.getRandomValues(new Uint8Array(64)))
+        .map((b) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"[b % 66])
+        .join("");
+      sessionStorage.setItem("google_pkce_verifier", verifier);
+
+      // Generate code challenge
+      const encoder = new TextEncoder();
+      const data = encoder.encode(verifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+
+      // Get auth URL from backend (uses env vars for client_id and correct redirect_uri)
+      const { authUrl } = await trpc.google.getAuthUrl.query();
+
+      // Append PKCE parameters to the backend-constructed URL
+      const url = new URL(authUrl);
+      url.searchParams.set("code_challenge", challenge);
+      url.searchParams.set("code_challenge_method", "S256");
+
+      window.location.href = url.toString();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to start Google auth");
+      setConnecting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      <Toaster position="top-right" richColors />
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -94,18 +178,15 @@ export default function Home() {
                 <CheckCircle className="w-4 h-4" /><LogOut className="w-3 h-3" />
               </Button>
             ) : (
-              <Button variant="ghost" size="sm" className="gap-2 text-[#1B2A4A]"
-               onClick={async () => {
-                  const clientId = "711074142580-2lh3uth8dn38hjmoth12roi8uomdaak2.apps.googleusercontent.com";
-                  const redirectUri = `${window.location.origin}/api/google/callback`;
-                  const scopes = encodeURIComponent("https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/presentations");
-                  const verifier = Array.from(crypto.getRandomValues(new Uint8Array(64))).map(b => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"[b % 66]).join("");
-                  sessionStorage.setItem("google_pkce_verifier", verifier);
-                  const challenge = btoa(String.fromCharCode(...new Uint8Array(crypto.subtle ? await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)) : new ArrayBuffer(0)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-                  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scopes}&access_type=offline&prompt=consent&code_challenge=${challenge}&code_challenge_method=S256`;
-                  window.location.href = url;
-                }}>
-                <LogIn className="w-4 h-4" />Connect Google
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-2 text-[#1B2A4A]"
+                onClick={handleConnectGoogle}
+                disabled={connecting}
+              >
+                {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
+                Connect Google
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={() => navigate("/library")} className="gap-2"><Library className="w-4 h-4" /></Button>

@@ -38,21 +38,26 @@ export const googleRouter = createRouter({
   }),
 
   handleCallback: publicQuery
-    .input(z.object({ code: z.string(), state: z.string() }))
+    .input(z.object({ code: z.string(), state: z.string(), codeVerifier: z.string().optional() }))
     .mutation(async ({ input, ctx }) => {
       const redirectUri = getRedirectUri(ctx.req);
 
-      // Exchange code for tokens
+      // Exchange code for tokens (with PKCE verifier if provided)
+      const params: Record<string, string> = {
+        code: input.code,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      };
+      if (input.codeVerifier) {
+        params.code_verifier = input.codeVerifier;
+      }
+
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          code: input.code,
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          redirect_uri: redirectUri,
-          grant_type: "authorization_code",
-        }),
+        body: new URLSearchParams(params),
       });
 
       const tokens = (await tokenRes.json()) as Record<string, any>;
