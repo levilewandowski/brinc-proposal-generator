@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const GOOGLE_CLIENT_ID = process.env.VITE_GOOGLE_CLIENT_ID || "";
+// Support both naming conventions (VITE_ prefix for frontend compat, plain for server-only)
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -13,6 +14,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (!code || !code_verifier) {
     return res.status(400).json({ error: "Missing code or code_verifier" });
+  }
+
+  // Debug: log env var presence (not values)
+  console.log("[Token] Env check:", {
+    hasClientId: !!GOOGLE_CLIENT_ID,
+    clientIdLength: GOOGLE_CLIENT_ID.length,
+    hasClientSecret: !!GOOGLE_CLIENT_SECRET,
+    clientSecretLength: GOOGLE_CLIENT_SECRET.length,
+    redirectUri: redirect_uri || "default",
+  });
+
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    return res.status(500).json({
+      error: "Server config missing: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set",
+    });
   }
 
   try {
