@@ -2,6 +2,19 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
+  "routes": [
+    {
+      "src": "/api/.*",
+      "dest": "/api/[[...route]]"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
   "functions": {
     "api/[[...route]].ts": {
       "runtime": "@vercel/node@3.2.0",
