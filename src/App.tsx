@@ -1,8 +1,8 @@
 import { Routes, Route } from 'react-router'
 import { Toaster } from 'sonner'
-import Home from './pages/Home'
-import ProposalView from './pages/ProposalView'
-import SlideLibrary from './pages/SlideLibrary'
+import Home from './pages/Home.tsx'
+import ProposalView from './pages/ProposalView.tsx'
+import SlideLibrary from './pages/SlideLibrary.tsx'
 
 export default function App() {
   return (
