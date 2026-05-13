@@ -76,7 +76,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const userInfo = (await userRes.json()) as Record<string, any>;
 
     if (!userInfo.email) {
-      return res.status(400).json({ error: "No email in Google user info" });
+      console.error("[Token Exchange] No email in userinfo:", userInfo);
+      return res.status(400).json({
+        error: "No email in Google user info",
+        availableFields: Object.keys(userInfo),
+      });
     }
 
     return res.status(200).json({
