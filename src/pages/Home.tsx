@@ -32,6 +32,7 @@ const CASE_STUDY_OPTIONS = [
 
 // Hardcoded to match Google Cloud OAuth credential
 const GOOGLE_CLIENT_ID = "711074142580-2lh3uth8dn38hjmoth12roi8uomdaak2.apps.googleusercontent.com";
+const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI = "https://brinc-proposal-generator.vercel.app/google/callback";
 
 export default function Home() {
@@ -68,6 +69,7 @@ export default function Home() {
     if (!code) return;
 
     const verifier = sessionStorage.getItem("google_pkce_verifier");
+    console.log("[OAuth] Callback received:", { code: code.substring(0, 10) + "...", verifier_present: !!verifier, verifier_length: verifier?.length });
     if (!verifier) {
       toast.error("OAuth session expired. Please try again.");
       navigate("/", { replace: true });
@@ -78,20 +80,38 @@ export default function Home() {
     toast.info("Connecting to Google...");
 
     // Exchange code for tokens client-side (PKCE)
+    // Build token request params — include client_secret if available (required for Web Application clients)
+    const tokenParams: Record<string, string> = {
+      code,
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: GOOGLE_REDIRECT_URI,
+      grant_type: "authorization_code",
+      code_verifier: verifier,
+    };
+    if (GOOGLE_CLIENT_SECRET) {
+      tokenParams.client_secret = GOOGLE_CLIENT_SECRET;
+    }
+    console.log("[OAuth] Starting token exchange", {
+      code: code.substring(0, 10) + "...",
+      redirect_uri: GOOGLE_REDIRECT_URI,
+      verifier_present: !!verifier,
+      verifier_length: verifier.length,
+      has_client_secret: !!GOOGLE_CLIENT_SECRET,
+    });
     fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: GOOGLE_CLIENT_ID,
-        redirect_uri: GOOGLE_REDIRECT_URI,
-        grant_type: "authorization_code",
-        code_verifier: verifier,
-      }),
+      body: new URLSearchParams(tokenParams),
     })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Token exchange failed: HTTP ${res.status}`);
-        return res.json();
+      .then(async (res) => {
+        const body = await res.json();
+        console.log("[OAuth] Token endpoint response:", { status: res.status, body });
+        if (!res.ok) {
+          throw new Error(
+            body.error_description || body.error || `Token exchange failed: HTTP ${res.status}`
+          );
+        }
+        return body;
       })
       .then((tokens: any) => {
         if (tokens.error) {
