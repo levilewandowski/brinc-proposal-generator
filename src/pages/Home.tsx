@@ -89,11 +89,15 @@ export default function Home() {
         code_verifier: verifier,
       }),
     })
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`Token exchange failed: HTTP ${res.status}`);
+        return res.json();
+      })
       .then((tokens: any) => {
         if (tokens.error) {
-          throw new Error(tokens.error_description || tokens.error);
+          throw new Error(tokens.error_description || tokens.error || "Token exchange error");
         }
+        if (!tokens.access_token) throw new Error("No access_token in response");
         // Get user info
         return fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
           headers: { Authorization: `Bearer ${tokens.access_token}` },
@@ -107,12 +111,13 @@ export default function Home() {
               setGoogleEmail(userInfo.email);
               toast.success(`Connected: ${userInfo.email}`);
             } else {
-              throw new Error("No email in user info");
+              throw new Error("No email in user info: " + JSON.stringify(userInfo));
             }
           });
       })
       .catch((err) => {
-        toast.error(err.message || "Failed to connect Google account");
+        console.error("[Google Callback] Error:", err);
+        toast.error("Google connect failed: " + (err?.message || String(err)));
       })
       .finally(() => {
         setConnecting(false);
@@ -153,16 +158,30 @@ export default function Home() {
     try {
       setConnecting(true);
 
+      // Defensive: check crypto API availability
+      if (typeof crypto === "undefined") throw new Error("crypto API not available");
+      if (typeof crypto.getRandomValues !== "function") throw new Error("crypto.getRandomValues is not a function");
+
       // Generate PKCE verifier
       const verifier = Array.from(crypto.getRandomValues(new Uint8Array(64)))
         .map((b) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"[b % 66])
         .join("");
       sessionStorage.setItem("google_pkce_verifier", verifier);
 
-      // Generate code challenge
+      // Defensive: check TextEncoder
+      if (typeof TextEncoder === "undefined") throw new Error("TextEncoder not available");
       const encoder = new TextEncoder();
       const data = encoder.encode(verifier);
+
+      // Defensive: check crypto.subtle
+      if (!crypto.subtle) throw new Error("crypto.subtle not available (requires HTTPS)");
+      if (typeof crypto.subtle.digest !== "function") throw new Error("crypto.subtle.digest is not a function");
+
       const digest = await crypto.subtle.digest("SHA-256", data);
+
+      // Defensive: check btoa
+      if (typeof btoa !== "function") throw new Error("btoa not available");
+
       const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
         .replace(/\+/g, "-")
         .replace(/\//g, "_")
@@ -185,7 +204,8 @@ export default function Home() {
 
       window.location.href = url;
     } catch (err: any) {
-      toast.error(err.message || "Failed to start Google auth");
+      console.error("[Google Connect] Error:", err);
+      toast.error("Google auth failed: " + (err?.message || String(err)));
       setConnecting(false);
     }
   };
