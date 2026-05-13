@@ -32,13 +32,14 @@ async function refreshAccessToken(refreshToken: string): Promise<string | null> 
   }
 }
 
-/** Look up a subfolder by name */
+/** Look up a subfolder by name under the configured root */
 async function getFolderId(accessToken: string, name: string): Promise<string | null> {
-  if (!DRIVE_ROOT_FOLDER) return null;
+  const rootFolder = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
+  if (!rootFolder) return null;
   const res = await fetch(
     "https://www.googleapis.com/drive/v3/files?q=" +
       encodeURIComponent(
-        `mimeType='application/vnd.google-apps.folder' and '${DRIVE_ROOT_FOLDER}' in parents and name='${name}' and trashed=false`
+        `mimeType='application/vnd.google-apps.folder' and '${rootFolder}' in parents and name='${name}' and trashed=false`
       ) +
       "&fields=files(id)",
     { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -91,9 +92,25 @@ async function copyTemplate(
 
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // GET diagnostic: report env var status without creating anything
+  if (req.method === "GET") {
+    const envFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
+    return res.status(200).json({
+      ok: true,
+      hasDriveFolderId: !!envFolderId,
+      driveFolderIdLength: envFolderId.length,
+      driveFolderIdPrefix: envFolderId ? envFolderId.substring(0, 12) + "..." : null,
+      hasClientId: !!GOOGLE_CLIENT_ID,
+      hasClientSecret: !!GOOGLE_CLIENT_SECRET,
+    });
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
+
+  // Read env var at request time (fresh after redeploy)
+  const runtimeDriveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
 
   let {
     accessToken,
@@ -400,15 +417,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ---- 6. Move to 01 Generated Proposals ----
     let folderPath = "";
-    const hasRootFolder = !!DRIVE_ROOT_FOLDER;
-    console.log("[Slides] Folder move:", { hasRootFolder, rootFolder: DRIVE_ROOT_FOLDER?.substring(0, 10) + "..." });
+    const hasRootFolder = !!runtimeDriveFolderId;
+    console.log("[Slides] Folder move:", {
+      hasRootFolder,
+      rootFolderPrefix: runtimeDriveFolderId ? runtimeDriveFolderId.substring(0, 10) + "..." : null,
+    });
 
     if (hasRootFolder) {
       try {
-        // Find or create the target subfolder
+        // Find or create the target subfolder under the configured root
         let targetFolderId = await getFolderId(accessToken, "01 Generated Proposals");
         if (!targetFolderId) {
-          // Create under the configured root folder
           const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
             method: "POST",
             headers: {
@@ -418,7 +437,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             body: JSON.stringify({
               name: "01 Generated Proposals",
               mimeType: "application/vnd.google-apps.folder",
-              parents: [DRIVE_ROOT_FOLDER],
+              parents: [runtimeDriveFolderId],
             }),
           });
           const folderData = (await createRes.json()) as { id?: string; error?: any };
