@@ -32,7 +32,7 @@ const CASE_STUDY_OPTIONS = [
 
 // Hardcoded to match Google Cloud OAuth credential
 const GOOGLE_CLIENT_ID = "711074142580-2lh3uth8dn38hjmoth12roi8uomdaak2.apps.googleusercontent.com";
-const GOOGLE_REDIRECT_URI = "https://brinc-proposal-generator.vercel.app/api/google/callback";
+const GOOGLE_REDIRECT_URI = "https://brinc-proposal-generator.vercel.app/google/callback";
 
 export default function Home() {
   const navigate = useNavigate();

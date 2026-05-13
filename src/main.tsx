@@ -5,7 +5,7 @@ import './index.css'
 import App from './App.tsx'
 
 // Handle Google OAuth callback before React loads
-// Google redirects to /api/google/callback?code=... which loads the SPA
+// Google redirects to /google/callback?code=... which loads the SPA
 // We redirect to /#/?google_code=... so the Home route (path="/") matches
 const urlParams = new URLSearchParams(window.location.search)
 const code = urlParams.get('code')
