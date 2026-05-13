@@ -4,12 +4,21 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 
+// AbortController polyfill for Node 18
+function abortableFetch(url: string, init: RequestInit & { timeout?: number }) {
+  const timeout = init.timeout || 10000;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(id));
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Quick health/debug response for GET
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,
       hasClientId: !!GOOGLE_CLIENT_ID,
+      clientIdPrefix: GOOGLE_CLIENT_ID ? GOOGLE_CLIENT_ID.split("-")[0] : null,
       hasClientSecret: !!GOOGLE_CLIENT_SECRET,
     });
   }
@@ -25,15 +34,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: "Missing code or code_verifier" });
   }
 
-  // Debug: log env var presence (not values)
-  console.log("[Token] Env check:", {
-    hasClientId: !!GOOGLE_CLIENT_ID,
-    clientIdLength: GOOGLE_CLIENT_ID.length,
-    hasClientSecret: !!GOOGLE_CLIENT_SECRET,
-    clientSecretLength: GOOGLE_CLIENT_SECRET.length,
-    redirectUri: redirect_uri || "default",
-  });
-
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     return res.status(500).json({
       error: "Server config missing: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set",
@@ -44,8 +44,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     // Exchange code for tokens with Google (server-side, includes client_secret)
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    const tokenRes = await abortableFetch("https://oauth2.googleapis.com/token", {
       method: "POST",
+      timeout: 8000,
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code: String(code),
@@ -67,10 +68,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Get user info from Google
-    const userRes = await fetch(
-      "https://www.googleapis.com/oauth2/v2/userinfo",
-      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
-    );
+    const userRes = await abortableFetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      method: "GET",
+      timeout: 5000,
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
     const userInfo = (await userRes.json()) as Record<string, any>;
 
     if (!userInfo.email) {
@@ -85,6 +87,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   } catch (err: any) {
     console.error("[Token Exchange] Error:", err);
+    if (err.name === "AbortError") {
+      return res.status(504).json({ error: "Request to Google timed out" });
+    }
     return res.status(500).json({ error: err.message || "Token exchange failed" });
   }
 }
