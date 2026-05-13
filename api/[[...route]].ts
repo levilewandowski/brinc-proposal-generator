@@ -35,21 +35,6 @@ app.get("/health", async (c) => {
   return c.json(checks);
 });
 
-// Google OAuth callback
-app.get("/google/callback", (c) => {
-  const code = c.req.query("code");
-  const error = c.req.query("error");
-
-  if (error) {
-    return c.redirect(`/?google_error=${encodeURIComponent(error)}`);
-  }
-  if (!code) {
-    return c.redirect("/?google_error=no_code");
-  }
-
-  return c.redirect(`/?google_code=${encodeURIComponent(code)}`);
-});
-
 // Save tokens from browser (legacy, kept for compatibility)
 app.post("/google/save", async (c) => {
   const body = await c.req.json().catch(() => ({}));
