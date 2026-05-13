@@ -2,35 +2,7 @@
   "buildCommand": "npm run vercel-build",
   "rewrites": [
     {
-      "source": "/api/google/token",
-      "destination": "/api/google/token"
-    },
-    {
-      "source": "/api/google/callback",
-      "destination": "/api/google/callback"
-    },
-    {
-      "source": "/api/google/slides",
-      "destination": "/api/google/slides"
-    },
-    {
-      "source": "/api/google/drive",
-      "destination": "/api/google/drive"
-    },
-    {
-      "source": "/api/google/library",
-      "destination": "/api/google/library"
-    },
-    {
-      "source": "/api/health",
-      "destination": "/api/health"
-    },
-    {
       "source": "/google/callback",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
