@@ -5,7 +5,26 @@
   "framework": "vite",
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/api/:path*",
+      "destination": "/api/index"
+    }
+  ]
+}
+ },
+    {
+      "source": "/api/trpc/:path*",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/google/save",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]
