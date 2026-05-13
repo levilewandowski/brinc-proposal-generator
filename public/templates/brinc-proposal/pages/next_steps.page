@@ -1,0 +1,238 @@
+pageType: content
+background:
+  type: solid
+  color: "$background"
+elements:
+  - elementId: logo
+    elementType: text
+    bounds: [60, 28, 120, 24]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:3px;"><strong>BRINC</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: page-num
+    elementType: text
+    bounds: [1180, 28, 40, 24]
+    content:
+      style: "$caption"
+      text: |
+        <p>07</p>
+      wrap: false
+      align: [right, middle]
+  - elementId: title
+    elementType: text
+    bounds: [60, 70, 700, 45]
+    content:
+      style: "$title"
+      fontSize: 32
+      text: |
+        <p><strong>Investment & Next Steps</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: accent-line
+    elementType: shape
+    bounds: [60, 120, 60, 3]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: step1-num
+    elementType: shape
+    bounds: [60, 165, 44, 44]
+    shapeName: ellipse
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: step1-num-text
+    elementType: text
+    bounds: [60, 165, 44, 44]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:#FFFFFF;"><strong>1</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [center, middle]
+  - elementId: step1-title
+    elementType: text
+    bounds: [120, 168, 460, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$primary;"><strong>{{STEP_1_TITLE}}</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: step1-desc
+    elementType: text
+    bounds: [120, 202, 460, 50]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>{{STEP_1_DESC}}</p>
+      align: [left, top]
+  - elementId: connector1
+    elementType: shape
+    bounds: [82, 209, 0, 50]
+    shapeName: straightConnector1
+    border:
+      style: dash
+      width: 1
+      color: "$midgray"
+  - elementId: step2-num
+    elementType: shape
+    bounds: [60, 275, 44, 44]
+    shapeName: ellipse
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: step2-num-text
+    elementType: text
+    bounds: [60, 275, 44, 44]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:#FFFFFF;"><strong>2</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [center, middle]
+  - elementId: step2-title
+    elementType: text
+    bounds: [120, 278, 460, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$primary;"><strong>{{STEP_2_TITLE}}</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: step2-desc
+    elementType: text
+    bounds: [120, 312, 460, 50]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>{{STEP_2_DESC}}</p>
+      align: [left, top]
+  - elementId: connector2
+    elementType: shape
+    bounds: [82, 319, 0, 50]
+    shapeName: straightConnector1
+    border:
+      style: dash
+      width: 1
+      color: "$midgray"
+  - elementId: step3-num
+    elementType: shape
+    bounds: [60, 385, 44, 44]
+    shapeName: ellipse
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: step3-num-text
+    elementType: text
+    bounds: [60, 385, 44, 44]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:#FFFFFF;"><strong>3</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [center, middle]
+  - elementId: step3-title
+    elementType: text
+    bounds: [120, 388, 460, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$primary;"><strong>{{STEP_3_TITLE}}</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: step3-desc
+    elementType: text
+    bounds: [120, 422, 460, 50]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>{{STEP_3_DESC}}</p>
+      align: [left, top]
+  - elementId: connector3
+    elementType: shape
+    bounds: [82, 429, 0, 50]
+    shapeName: straightConnector1
+    border:
+      style: dash
+      width: 1
+      color: "$midgray"
+  - elementId: step4-num
+    elementType: shape
+    bounds: [60, 495, 44, 44]
+    shapeName: ellipse
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: step4-num-text
+    elementType: text
+    bounds: [60, 495, 44, 44]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:#FFFFFF;"><strong>4</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [center, middle]
+  - elementId: step4-title
+    elementType: text
+    bounds: [120, 498, 460, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$primary;"><strong>{{STEP_4_TITLE}}</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: step4-desc
+    elementType: text
+    bounds: [120, 532, 460, 50]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>{{STEP_4_DESC}}</p>
+      align: [left, top]
+  - elementId: right-panel
+    elementType: shape
+    bounds: [640, 150, 580, 440]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: right-title
+    elementType: text
+    bounds: [670, 175, 520, 35]
+    content:
+      text: |
+        <p><span style="font-size:18px; color:#FFFFFF; letter-spacing:2px;"><strong>WHAT TO EXPECT</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: right-divider
+    elementType: shape
+    bounds: [670, 218, 60, 2]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: right-body
+    elementType: text
+    bounds: [670, 240, 520, 330]
+    content:
+      fontSize: 16
+      color: "#FFFFFFDD"
+      fontFamily: "Liter"
+      lineHeight: 1.6
+      text: |
+        <p><strong style="color:#FFFFFF">Program Duration:</strong> {{PROGRAM_DURATION}}</p>
+        <p style="margin-top:12px"><strong style="color:#FFFFFF">Format:</strong> {{PROGRAM_FORMAT}}</p>
+        <p style="margin-top:12px"><strong style="color:#FFFFFF">Team:</strong> {{PROGRAM_TEAM}}</p>
+        <p style="margin-top:12px"><strong style="color:#FFFFFF">Investment:</strong> {{PROGRAM_INVESTMENT}}</p>
+        <p style="margin-top:20px"><em>{{CLOSING_NOTE}}</em></p>
+      align: [left, top]

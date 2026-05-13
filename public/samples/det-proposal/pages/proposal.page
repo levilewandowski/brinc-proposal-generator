@@ -1,0 +1,146 @@
+pageType: content
+background:
+  type: solid
+  color: "$background"
+elements:
+  - elementId: logo
+    elementType: text
+    bounds: [60, 28, 120, 24]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:3px;"><strong>BRINC</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: page-num
+    elementType: text
+    bounds: [1180, 28, 40, 24]
+    content:
+      style: "$caption"
+      text: |
+        <p>03</p>
+      wrap: false
+      align: [right, middle]
+  - elementId: title
+    elementType: text
+    bounds: [60, 70, 700, 45]
+    content:
+      style: "$title"
+      fontSize: 32
+      text: |
+        <p><strong>What We're Proposing</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: accent-line
+    elementType: shape
+    bounds: [60, 120, 60, 3]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: pillar1-icon
+    elementType: icon
+    bounds: [60, 165, 32, 32]
+    iconName: "fas:rocket"
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: pillar1-title
+    elementType: text
+    bounds: [105, 163, 480, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$primary;"><strong>Program Design & Delivery</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: pillar1-desc
+    elementType: text
+    bounds: [105, 197, 480, 70]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>End-to-end accelerator design — curriculum, workshops, and milestone-based progression tailored for AI startups.</p>
+      align: [left, top]
+  - elementId: pillar2-icon
+    elementType: icon
+    bounds: [60, 295, 32, 32]
+    iconName: "fas:users"
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: pillar2-title
+    elementType: text
+    bounds: [105, 293, 480, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$primary;"><strong>Founder Scouting & Selection</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: pillar2-desc
+    elementType: text
+    bounds: [105, 327, 480, 70]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Rigorous sourcing across our Asia-Pacific and MENA networks, with structured vetting and sector alignment.</p>
+      align: [left, top]
+  - elementId: pillar3-icon
+    elementType: icon
+    bounds: [60, 425, 32, 32]
+    iconName: "fas:chart-line"
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: pillar3-title
+    elementType: text
+    bounds: [105, 423, 480, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$primary;"><strong>Mentorship & Investor Access</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: pillar3-desc
+    elementType: text
+    bounds: [105, 457, 480, 70]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Weekly 1:1 coaching with sector-matched mentors, plus Demo Day and direct UpRound syndicate introductions.</p>
+      align: [left, top]
+  - elementId: right-panel
+    elementType: shape
+    bounds: [660, 150, 560, 380]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$lightgray"
+  - elementId: right-title
+    elementType: text
+    bounds: [690, 170, 500, 30]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:2px;"><strong>KEY DELIVERABLES</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: deliverables
+    elementType: text
+    bounds: [690, 210, 500, 300]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <ul>
+        <li>Complete program framework & curriculum</li>
+        <li>Cohort of 20 selected AI startups</li>
+        <li>Weekly workshops & 1:1 mentorship sessions</li>
+        <li>Demo Day with investor network access</li>
+        <li>Final program report with outcomes & insights</li>
+        </ul>
+      align: [left, top]

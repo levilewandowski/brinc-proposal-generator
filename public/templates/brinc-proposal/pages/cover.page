@@ -1,0 +1,86 @@
+pageType: cover
+background:
+  type: solid
+  color: "$primary"
+elements:
+  - elementId: accent-line-top
+    elementType: shape
+    bounds: [60, 60, 80, 4]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: logo-text
+    elementType: text
+    bounds: [60, 80, 200, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:#FFFFFF; letter-spacing:4px;">BRINC.IO</span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: title
+    elementType: text
+    bounds: [60, 240, 700, 60]
+    content:
+      style: "$title"
+      color: "#FFFFFF"
+      fontSize: 48
+      letterSpacing: 2
+      text: |
+        <p><strong>PARTNERSHIP PROPOSAL</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: accent-line-title
+    elementType: shape
+    bounds: [60, 320, 120, 3]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: subtitle
+    elementType: text
+    bounds: [60, 345, 600, 35]
+    content:
+      style: "$subtitle"
+      color: "#FFFFFFCC"
+      text: |
+        <p>{{PROSPECT_COMPANY}} x Brinc</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: date
+    elementType: text
+    bounds: [60, 395, 300, 25]
+    content:
+      style: "$caption"
+      color: "#FFFFFF99"
+      text: |
+        <p>{{DATE}}</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: confidential
+    elementType: text
+    bounds: [60, 640, 400, 25]
+    content:
+      style: "$caption"
+      color: "#FFFFFF60"
+      fontSize: 12
+      letterSpacing: 1
+      text: |
+        <p>PRIVATE & CONFIDENTIAL</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: right-accent
+    elementType: shape
+    bounds: [1100, 0, 180, 720]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "#FFFFFF08"
+  - elementId: bottom-bar
+    elementType: shape
+    bounds: [0, 710, 1280, 10]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"

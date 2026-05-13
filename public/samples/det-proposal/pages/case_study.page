@@ -1,0 +1,157 @@
+pageType: content
+background:
+  type: solid
+  color: "$background"
+elements:
+  - elementId: logo
+    elementType: text
+    bounds: [60, 28, 120, 24]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:3px;"><strong>BRINC</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: page-num
+    elementType: text
+    bounds: [1180, 28, 40, 24]
+    content:
+      style: "$caption"
+      text: |
+        <p>06</p>
+      wrap: false
+      align: [right, middle]
+  - elementId: title
+    elementType: text
+    bounds: [60, 70, 800, 45]
+    content:
+      style: "$title"
+      fontSize: 32
+      text: |
+        <p><strong>Hi2 Tech Incubator — Dubai DET</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: accent-line
+    elementType: shape
+    bounds: [60, 120, 60, 3]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: sector-badge
+    elementType: shape
+    bounds: [60, 145, 120, 28]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: sector-text
+    elementType: text
+    bounds: [60, 145, 120, 28]
+    content:
+      text: |
+        <p><span style="font-size:12px; color:#FFFFFF;"><strong>Government / Tech</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [center, middle]
+  - elementId: background-title
+    elementType: text
+    bounds: [60, 200, 200, 28]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:2px;"><strong>BACKGROUND</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: background-body
+    elementType: text
+    bounds: [60, 235, 540, 120]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>DET engaged Brinc to design and deliver a 16-week incubator for 20 Emirati founders, aligned with Dubai's D33 economic agenda. The program needed to cover ideation through MVP validation with structured mentorship.</p>
+      align: [left, top]
+  - elementId: details-title
+    elementType: text
+    bounds: [60, 375, 200, 28]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:2px;"><strong>WHAT WE DID</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: details-body
+    elementType: text
+    bounds: [60, 410, 540, 140]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <ul>
+        <li>Designed complete program framework with 16-week curriculum</li>
+        <li>Sourced and selected 20 Emirati founders across 7 D33 priority sectors</li>
+        <li>Delivered hybrid format with weekly workshops and 1:1 mentorship</li>
+        </ul>
+      align: [left, top]
+  - elementId: outcome-box
+    elementType: shape
+    bounds: [640, 200, 580, 360]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$lightgray"
+  - elementId: outcome-title
+    elementType: text
+    bounds: [665, 220, 530, 28]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:2px;"><strong>OUTCOME</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: outcome-stat1
+    elementType: text
+    bounds: [665, 265, 250, 50]
+    content:
+      text: |
+        <p><span style="font-size:36px; color:$accent;"><strong>20</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, bottom]
+  - elementId: outcome-stat1-label
+    elementType: text
+    bounds: [665, 318, 250, 25]
+    content:
+      style: "$caption"
+      text: |
+        <p>Founders graduated</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: outcome-stat2
+    elementType: text
+    bounds: [930, 265, 250, 50]
+    content:
+      text: |
+        <p><span style="font-size:36px; color:$accent;"><strong>7</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, bottom]
+  - elementId: outcome-stat2-label
+    elementType: text
+    bounds: [930, 318, 250, 25]
+    content:
+      style: "$caption"
+      text: |
+        <p>Priority sectors covered</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: outcome-desc
+    elementType: text
+    bounds: [665, 365, 530, 170]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Program currently ongoing with strong engagement. Founders have completed Business Model Canvas, conducted 100+ customer interviews, and built initial MVPs. Demo Day scheduled for GITEX 2026.</p>
+      align: [left, top]

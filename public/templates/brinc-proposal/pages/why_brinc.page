@@ -1,0 +1,163 @@
+pageType: content
+background:
+  type: solid
+  color: "$background"
+elements:
+  - elementId: logo
+    elementType: text
+    bounds: [60, 28, 120, 24]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:3px;"><strong>BRINC</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: page-num
+    elementType: text
+    bounds: [1180, 28, 40, 24]
+    content:
+      style: "$caption"
+      text: |
+        <p>05</p>
+      wrap: false
+      align: [right, middle]
+  - elementId: title
+    elementType: text
+    bounds: [60, 70, 600, 45]
+    content:
+      style: "$title"
+      fontSize: 32
+      text: |
+        <p><strong>Why Brinc</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: accent-line
+    elementType: shape
+    bounds: [60, 120, 60, 3]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: stat1-value
+    elementType: text
+    bounds: [60, 160, 250, 65]
+    content:
+      style: "$stat"
+      text: |
+        <p><strong>12+</strong></p>
+      wrap: false
+      align: [left, bottom]
+  - elementId: stat1-label
+    elementType: text
+    bounds: [60, 230, 250, 50]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Years Scaling Innovation Globally</p>
+      align: [left, top]
+  - elementId: stat2-value
+    elementType: text
+    bounds: [350, 160, 250, 65]
+    content:
+      style: "$stat"
+      text: |
+        <p><strong>75+</strong></p>
+      wrap: false
+      align: [left, bottom]
+  - elementId: stat2-label
+    elementType: text
+    bounds: [350, 230, 250, 50]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Programs Run Globally</p>
+      align: [left, top]
+  - elementId: stat3-value
+    elementType: text
+    bounds: [640, 160, 250, 65]
+    content:
+      style: "$stat"
+      text: |
+        <p><strong>170+</strong></p>
+      wrap: false
+      align: [left, bottom]
+  - elementId: stat3-label
+    elementType: text
+    bounds: [640, 230, 250, 50]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Portfolio Companies</p>
+      align: [left, top]
+  - elementId: stat4-value
+    elementType: text
+    bounds: [930, 160, 290, 65]
+    content:
+      style: "$stat"
+      text: |
+        <p><strong>$1.69B+</strong></p>
+      wrap: false
+      align: [left, bottom]
+  - elementId: stat4-label
+    elementType: text
+    bounds: [930, 230, 290, 50]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Total Portfolio Market Cap</p>
+      align: [left, top]
+  - elementId: divider
+    elementType: shape
+    bounds: [60, 310, 1160, 1]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$midgray"
+  - elementId: approach-title
+    elementType: text
+    bounds: [60, 335, 500, 35]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$primary;"><strong>Our Approach to This Partnership</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: approach-body
+    elementType: text
+    bounds: [60, 380, 540, 200]
+    content:
+      style: "$body"
+      text: |
+        <p>{{APPROACH_TEXT}}</p>
+      align: [left, top]
+  - elementId: network-box
+    elementType: shape
+    bounds: [640, 335, 580, 260]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$lightgray"
+  - elementId: network-title
+    elementType: text
+    bounds: [665, 350, 530, 28]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:2px;"><strong>GLOBAL FOOTPRINT</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: network-body
+    elementType: text
+    bounds: [665, 385, 530, 190]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p><strong>Active Hubs:</strong> Hong Kong, Singapore, Bahrain, UAE, Qatar, Oman, India</p>
+        <p style="margin-top:8px"><strong>Sector Depth:</strong> AI, ClimateTech, Web3, HealthTech, Space, Advanced Manufacturing</p>
+        <p style="margin-top:8px"><strong>Capital Access:</strong> UpRound syndicate, VC partnerships, co-investment structures</p>
+      align: [left, top]

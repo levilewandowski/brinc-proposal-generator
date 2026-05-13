@@ -1,0 +1,117 @@
+pageType: final
+background:
+  type: solid
+  color: "$primary"
+elements:
+  - elementId: accent-line-top
+    elementType: shape
+    bounds: [60, 60, 80, 4]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: logo-text
+    elementType: text
+    bounds: [60, 80, 200, 30]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:#FFFFFF; letter-spacing:4px;">BRINC.IO</span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: title
+    elementType: text
+    bounds: [60, 220, 700, 60]
+    content:
+      fontSize: 42
+      color: "#FFFFFF"
+      fontFamily: "Liter"
+      letterSpacing: 1
+      text: |
+        <p><strong>Let's Build This Together</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: accent-line
+    elementType: shape
+    bounds: [60, 295, 120, 3]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: contact-name
+    elementType: text
+    bounds: [60, 330, 500, 30]
+    content:
+      fontSize: 20
+      color: "#FFFFFFCC"
+      fontFamily: "Liter"
+      text: |
+        <p>{{SENDER_NAME}}</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: contact-role
+    elementType: text
+    bounds: [60, 362, 500, 25]
+    content:
+      fontSize: 16
+      color: "#FFFFFF99"
+      fontFamily: "Liter"
+      text: |
+        <p>{{SENDER_ROLE}}</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: contact-email
+    elementType: text
+    bounds: [60, 400, 500, 25]
+    content:
+      fontSize: 16
+      color: "#FFFFFF99"
+      fontFamily: "Liter"
+      text: |
+        <p>{{SENDER_EMAIL}}</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: divider
+    elementType: shape
+    bounds: [60, 470, 500, 1]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "#FFFFFF20"
+  - elementId: tagline
+    elementType: text
+    bounds: [60, 490, 600, 60]
+    content:
+      fontSize: 16
+      color: "#FFFFFF80"
+      fontFamily: "Liter"
+      lineHeight: 1.5
+      text: |
+        <p>Empowering entrepreneurs to solve the world's most pressing challenges through technology and sustainable innovation.</p>
+      align: [left, top]
+  - elementId: confidential
+    elementType: text
+    bounds: [60, 640, 400, 25]
+    content:
+      style: "$caption"
+      color: "#FFFFFF40"
+      fontSize: 12
+      letterSpacing: 1
+      text: |
+        <p>PRIVATE & CONFIDENTIAL</p>
+      wrap: false
+      align: [left, middle]
+  - elementId: right-panel
+    elementType: shape
+    bounds: [1050, 0, 230, 720]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "#FFFFFF06"
+  - elementId: bottom-bar
+    elementType: shape
+    bounds: [0, 710, 1280, 10]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"

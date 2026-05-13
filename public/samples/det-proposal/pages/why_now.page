@@ -1,0 +1,135 @@
+pageType: content
+background:
+  type: solid
+  color: "$background"
+elements:
+  - elementId: logo
+    elementType: text
+    bounds: [60, 28, 120, 24]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:3px;"><strong>BRINC</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: page-num
+    elementType: text
+    bounds: [1180, 28, 40, 24]
+    content:
+      style: "$caption"
+      text: |
+        <p>02</p>
+      wrap: false
+      align: [right, middle]
+  - elementId: title
+    elementType: text
+    bounds: [60, 70, 600, 45]
+    content:
+      style: "$title"
+      fontSize: 32
+      text: |
+        <p><strong>Why This, Why Now</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: accent-line
+    elementType: shape
+    bounds: [60, 120, 60, 3]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: context-body
+    elementType: text
+    bounds: [60, 150, 700, 240]
+    content:
+      style: "$body"
+      text: |
+        <p>Dubai's D33 strategy positions the emirate as a global hub for AI and digital innovation. With targeted support for Emirati founders, DET has a unique opportunity to channel this momentum into a structured accelerator that produces tangible outcomes — not just Demo Day pitches, but investable, market-ready startups.</p>
+        <p style="margin-top:16px">Our conversation surfaced three priorities: founder pipeline quality, hands-on mentorship beyond capital, and GCC market access. Brinc's 12+ years of program execution across Asia and MENA, combined with our VentureVerse platform for ongoing founder support, directly addresses each of these.</p>
+      align: [left, top]
+  - elementId: opportunity-box
+    elementType: shape
+    bounds: [820, 150, 400, 200]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$lightgray"
+  - elementId: opportunity-title
+    elementType: text
+    bounds: [845, 165, 350, 30]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:2px;"><strong>THE OPPORTUNITY</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: opportunity-body
+    elementType: text
+    bounds: [845, 200, 350, 130]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Launch a 16-week AI-focused accelerator in Q3 2026, targeting 20 Emirati founders, with structured mentorship, pilot execution, and investor access through Brinc's UpRound syndicate.</p>
+      align: [left, top]
+  - elementId: divider
+    elementType: shape
+    bounds: [60, 420, 1160, 1]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$midgray"
+  - elementId: stat1-num
+    elementType: text
+    bounds: [60, 450, 280, 60]
+    content:
+      style: "$stat"
+      text: |
+        <p><strong>20</strong></p>
+      wrap: false
+      align: [left, bottom]
+  - elementId: stat1-label
+    elementType: text
+    bounds: [60, 515, 280, 60]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Emirati founders per cohort</p>
+      align: [left, top]
+  - elementId: stat2-num
+    elementType: text
+    bounds: [380, 450, 280, 60]
+    content:
+      style: "$stat"
+      text: |
+        <p><strong>16 weeks</strong></p>
+      wrap: false
+      align: [left, bottom]
+  - elementId: stat2-label
+    elementType: text
+    bounds: [380, 515, 280, 60]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Program duration</p>
+      align: [left, top]
+  - elementId: stat3-num
+    elementType: text
+    bounds: [700, 450, 280, 60]
+    content:
+      style: "$stat"
+      text: |
+        <p><strong>Q3 '26</strong></p>
+      wrap: false
+      align: [left, bottom]
+  - elementId: stat3-label
+    elementType: text
+    bounds: [700, 515, 280, 60]
+    content:
+      style: "$body"
+      fontSize: 16
+      text: |
+        <p>Target launch</p>
+      align: [left, top]

@@ -1,0 +1,59 @@
+title: Brinc Partnership Proposal
+size: [1280, 720]
+theme:
+  colors:
+    primary: "#1B2A4A"
+    secondary: "#4A6FA5"
+    accent: "#E8A838"
+    background: "#FFFFFF"
+    text: "#2D3748"
+    lightgray: "#F7FAFC"
+    midgray: "#E2E8F0"
+    caption: "#718096"
+  textStyles:
+    title:
+      fontSize: 32
+      color: "$primary"
+      fontFamily: "Liter"
+      letterSpacing: 1
+    subtitle:
+      fontSize: 22
+      color: "$secondary"
+      fontFamily: "Liter"
+      lineHeight: 1.4
+    body:
+      fontSize: 18
+      color: "$text"
+      fontFamily: "Liter"
+      lineHeight: 1.6
+    stat:
+      fontSize: 48
+      color: "$accent"
+      fontFamily: "Liter"
+    caption:
+      fontSize: 14
+      color: "$caption"
+      fontFamily: "Liter"
+      lineHeight: 1.4
+  tableStyles:
+    default:
+      headerFill: "$primary"
+      headerColor: "#FFFFFF"
+      headerBold: true
+      bodyFill:
+        - "#FFFFFF"
+        - "$lightgray"
+      bodyColor: "$text"
+      border:
+        style: solid
+        width: 1
+        color: "$midgray"
+pages:
+  - pages/cover.page
+  - pages/why_now.page
+  - pages/proposal.page
+  - pages/approach.page
+  - pages/why_brinc.page
+  - pages/case_study.page
+  - pages/next_steps.page
+  - pages/closing.page

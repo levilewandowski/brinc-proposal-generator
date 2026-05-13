@@ -1,0 +1,218 @@
+pageType: content
+background:
+  type: solid
+  color: "$background"
+elements:
+  - elementId: logo
+    elementType: text
+    bounds: [60, 28, 120, 24]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary; letter-spacing:3px;"><strong>BRINC</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: page-num
+    elementType: text
+    bounds: [1180, 28, 40, 24]
+    content:
+      style: "$caption"
+      text: |
+        <p>04</p>
+      wrap: false
+      align: [right, middle]
+  - elementId: title
+    elementType: text
+    bounds: [60, 70, 600, 45]
+    content:
+      style: "$title"
+      fontSize: 32
+      text: |
+        <p><strong>How This Works</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: accent-line
+    elementType: shape
+    bounds: [60, 120, 60, 3]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$accent"
+  - elementId: phase1-box
+    elementType: shape
+    bounds: [60, 160, 265, 320]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$lightgray"
+  - elementId: phase1-num
+    elementType: text
+    bounds: [80, 175, 60, 40]
+    content:
+      style: "$stat"
+      fontSize: 36
+      text: |
+        <p><strong>01</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: phase1-title
+    elementType: text
+    bounds: [80, 220, 225, 30]
+    content:
+      text: |
+        <p><span style="font-size:16px; color:$primary;"><strong>{{PHASE_1_TITLE}}</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: phase1-desc
+    elementType: text
+    bounds: [80, 255, 225, 200]
+    content:
+      style: "$body"
+      fontSize: 15
+      text: |
+        <p>{{PHASE_1_DESC}}</p>
+      align: [left, top]
+  - elementId: arrow1
+    elementType: shape
+    bounds: [335, 300, 25, 0]
+    shapeName: straightConnector1
+    arrow: [null, "arrow"]
+    border:
+      style: solid
+      width: 2
+      color: "$accent"
+  - elementId: phase2-box
+    elementType: shape
+    bounds: [370, 160, 265, 320]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$lightgray"
+  - elementId: phase2-num
+    elementType: text
+    bounds: [390, 175, 60, 40]
+    content:
+      style: "$stat"
+      fontSize: 36
+      text: |
+        <p><strong>02</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: phase2-title
+    elementType: text
+    bounds: [390, 220, 225, 30]
+    content:
+      text: |
+        <p><span style="font-size:16px; color:$primary;"><strong>{{PHASE_2_TITLE}}</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: phase2-desc
+    elementType: text
+    bounds: [390, 255, 225, 200]
+    content:
+      style: "$body"
+      fontSize: 15
+      text: |
+        <p>{{PHASE_2_DESC}}</p>
+      align: [left, top]
+  - elementId: arrow2
+    elementType: shape
+    bounds: [645, 300, 25, 0]
+    shapeName: straightConnector1
+    arrow: [null, "arrow"]
+    border:
+      style: solid
+      width: 2
+      color: "$accent"
+  - elementId: phase3-box
+    elementType: shape
+    bounds: [680, 160, 265, 320]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$lightgray"
+  - elementId: phase3-num
+    elementType: text
+    bounds: [700, 175, 60, 40]
+    content:
+      style: "$stat"
+      fontSize: 36
+      text: |
+        <p><strong>03</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: phase3-title
+    elementType: text
+    bounds: [700, 220, 225, 30]
+    content:
+      text: |
+        <p><span style="font-size:16px; color:$primary;"><strong>{{PHASE_3_TITLE}}</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: phase3-desc
+    elementType: text
+    bounds: [700, 255, 225, 200]
+    content:
+      style: "$body"
+      fontSize: 15
+      text: |
+        <p>{{PHASE_3_DESC}}</p>
+      align: [left, top]
+  - elementId: arrow3
+    elementType: shape
+    bounds: [955, 300, 25, 0]
+    shapeName: straightConnector1
+    arrow: [null, "arrow"]
+    border:
+      style: solid
+      width: 2
+      color: "$accent"
+  - elementId: phase4-box
+    elementType: shape
+    bounds: [990, 160, 230, 320]
+    shapeName: rect
+    fill:
+      type: solid
+      color: "$primary"
+  - elementId: phase4-num
+    elementType: text
+    bounds: [1010, 175, 60, 40]
+    content:
+      style: "$stat"
+      fontSize: 36
+      color: "#FFFFFF"
+      text: |
+        <p><strong>04</strong></p>
+      wrap: false
+      align: [left, middle]
+  - elementId: phase4-title
+    elementType: text
+    bounds: [1010, 220, 190, 30]
+    content:
+      text: |
+        <p><span style="font-size:16px; color:#FFFFFF;"><strong>{{PHASE_4_TITLE}}</strong></span></p>
+      fontFamily: "Liter"
+      wrap: false
+      align: [left, middle]
+  - elementId: phase4-desc
+    elementType: text
+    bounds: [1010, 255, 190, 200]
+    content:
+      fontSize: 15
+      color: "#FFFFFFCC"
+      fontFamily: "Liter"
+      lineHeight: 1.5
+      text: |
+        <p>{{PHASE_4_DESC}}</p>
+      align: [left, top]
+  - elementId: timeline-label
+    elementType: text
+    bounds: [60, 510, 1160, 30]
+    content:
+      style: "$caption"
+      text: |
+        <p><em>Typical program timeline: 16–20 weeks from kick-off to Demo Day</em></p>
+      align: [center, middle]
