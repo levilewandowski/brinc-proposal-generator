@@ -32,7 +32,6 @@ const CASE_STUDY_OPTIONS = [
 
 // Hardcoded to match Google Cloud OAuth credential
 const GOOGLE_CLIENT_ID = "711074142580-2lh3uth8dn38hjmoth12roi8uomdaak2.apps.googleusercontent.com";
-const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI = "https://brinc-proposal-generator.vercel.app/google/callback";
 
 export default function Home() {
@@ -79,61 +78,33 @@ export default function Home() {
     setConnecting(true);
     toast.info("Connecting to Google...");
 
-    // Exchange code for tokens client-side (PKCE)
-    // Build token request params — include client_secret if available (required for Web Application clients)
-    const tokenParams: Record<string, string> = {
-      code,
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: GOOGLE_REDIRECT_URI,
-      grant_type: "authorization_code",
-      code_verifier: verifier,
-    };
-    if (GOOGLE_CLIENT_SECRET) {
-      tokenParams.client_secret = GOOGLE_CLIENT_SECRET;
-    }
-    console.log("[OAuth] Starting token exchange", {
-      code: code.substring(0, 10) + "...",
-      redirect_uri: GOOGLE_REDIRECT_URI,
-      verifier_present: !!verifier,
-      verifier_length: verifier.length,
-      has_client_secret: !!GOOGLE_CLIENT_SECRET,
-    });
-    fetch("https://oauth2.googleapis.com/token", {
+    // Send code + verifier to backend for secure token exchange (client_secret stays server-side)
+    fetch("/api/google/token", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams(tokenParams),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code,
+        code_verifier: verifier,
+        redirect_uri: GOOGLE_REDIRECT_URI,
+      }),
     })
       .then(async (res) => {
-        const body = await res.json();
-        console.log("[OAuth] Token endpoint response:", { status: res.status, body });
+        const data = await res.json();
         if (!res.ok) {
-          throw new Error(
-            body.error_description || body.error || `Token exchange failed: HTTP ${res.status}`
-          );
+          throw new Error(data.error || `Token exchange failed: HTTP ${res.status}`);
         }
-        return body;
+        return data;
       })
-      .then((tokens: any) => {
-        if (tokens.error) {
-          throw new Error(tokens.error_description || tokens.error || "Token exchange error");
+      .then((result: any) => {
+        if (result.email) {
+          localStorage.setItem("brinc_google_email", result.email);
+          localStorage.setItem("brinc_google_access_token", result.accessToken || "");
+          localStorage.setItem("brinc_google_refresh_token", result.refreshToken || "");
+          setGoogleEmail(result.email);
+          toast.success(`Connected: ${result.email}`);
+        } else {
+          throw new Error("No email in response");
         }
-        if (!tokens.access_token) throw new Error("No access_token in response");
-        // Get user info
-        return fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-          headers: { Authorization: `Bearer ${tokens.access_token}` },
-        })
-          .then((res) => res.json())
-          .then((userInfo: any) => {
-            if (userInfo.email) {
-              localStorage.setItem("brinc_google_email", userInfo.email);
-              localStorage.setItem("brinc_google_access_token", tokens.access_token);
-              localStorage.setItem("brinc_google_refresh_token", tokens.refresh_token || "");
-              setGoogleEmail(userInfo.email);
-              toast.success(`Connected: ${userInfo.email}`);
-            } else {
-              throw new Error("No email in user info: " + JSON.stringify(userInfo));
-            }
-          });
       })
       .catch((err) => {
         console.error("[Google Callback] Error:", err);
