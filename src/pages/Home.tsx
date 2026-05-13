@@ -95,7 +95,7 @@ export default function Home() {
               </Button>
             ) : (
               <Button variant="ghost" size="sm" className="gap-2 text-[#1B2A4A]"
-                onClick={() => {
+               onClick={async () => {
                   const clientId = "711074142580-2lh3uth8dn38hjmoth12roi8uomdaak2.apps.googleusercontent.com";
                   const redirectUri = `${window.location.origin}/api/google/callback`;
                   const scopes = encodeURIComponent("https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/presentations");
