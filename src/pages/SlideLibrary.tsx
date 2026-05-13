@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, type ChangeEvent } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -19,7 +19,7 @@ export default function SlideLibrary() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.name.endsWith(".pptx")) { toast.error("Only .pptx files"); return; }
