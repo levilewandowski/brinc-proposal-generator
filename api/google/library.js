@@ -141,7 +141,7 @@ export default function handler(req, res) {
           var subfolderFiles = discovered.subfolderFiles || [];
           var combined = pptxFiles.concat(subfolderFiles);
           logs.push(discovered.folder + ": " + combined.length + " presentation file(s) (" + pptxFiles.length + " direct + " + subfolderFiles.length + " from subfolders)");
-          folderResults.push({ folder: discovered.folder, folderId: discovered.folderId, files: combined.map(function(f) { return { id: f.id, name: f.name, modifiedTime: f.modifiedTime }; }) });
+          folderResults.push({ folder: discovered.folder, folderId: discovered.folderId, files: combined.map(function(f) { return { id: f.id, name: f.name, mimeType: f.mimeType, modifiedTime: f.modifiedTime }; }) });
         });
         return { folderResults: folderResults, folderNames: folderNames, allChildrenCount: allChildren.length };
       });
@@ -188,17 +188,30 @@ export default function handler(req, res) {
       }).then(function(templateLibId) {
         return deepScanFiles(token, filesToScan, templateLibId, logs);
       }).then(function(scanResult) {
-        logs.push("Building text index...");
-        var slideIndex = buildSlideIndex(scanResult);
-        logs.push("Text index: " + slideIndex.slides.length + " slides");
+        logs.push("SCAN_RESULT: deckProfiles=" + (scanResult.deckProfiles || []).length
+          + " totalSlides=" + scanResult.totalSlidesScanned);
 
-        logs.push("Building DNA index...");
+        if (!scanResult.deckProfiles || scanResult.deckProfiles.length === 0) {
+          logs.push("INDEX: No deck profiles — extraction pipeline failed");
+          return res.end(JSON.stringify({
+            ok: true, msg: "No slides extracted", totalPptxFiles: allFiles.length,
+            workspace: { rootFolderName: workspaceMeta.rootName, rootFolderId: workspaceMeta.rootId },
+            fileList: allFiles.map(function(f) { return { folder: f.folder, name: f.name, modifiedTime: f.modifiedTime }; }),
+            deckProfiles: [], logs: logs,
+          }));
+        }
+
+        logs.push("INDEX: Building from " + scanResult.deckProfiles.length + " deck profiles...");
+        var slideIndex = buildSlideIndex(scanResult);
+        logs.push("INDEX: text=" + slideIndex.slides.length + " slides from " + slideIndex.decks.length + " decks");
+
         var dnaIndex = buildDNAIndex(scanResult.deckProfiles);
-        logs.push("DNA index: " + dnaIndex.slides.length + " slides, components: " + JSON.stringify(dnaIndex.componentCounts));
+        logs.push("INDEX: DNA=" + dnaIndex.slides.length + " slides components=" + JSON.stringify(dnaIndex.componentCounts));
 
         return saveIndexToDrive(token, DRIVE_ROOT, slideIndex, logs).then(function() {
           return saveDNAToDrive(token, DRIVE_ROOT, dnaIndex, logs);
         }).then(function() {
+          logs.push("INDEX: Saved — slide_index.json + slide_dna.json");
           return res.end(JSON.stringify({
             ok: true,
             totalPptxFiles: allFiles.length,
@@ -446,6 +459,7 @@ function readAndExtractSlides(token, presId, file, logs) {
 
     var slideTexts = []; var slideTypes = []; var slideLayouts = [];
     var sectionFlow = []; var slideDetails = []; var slideDNARecords = [];
+    var fileContentSamples = {};
 
     slides.forEach(function(slide) {
       var texts = []; var boldTexts = []; var shapeCount = 0;
@@ -476,6 +490,13 @@ function readAndExtractSlides(token, presId, file, logs) {
       else if (boldTexts.length > 0) layout = "title_only";
       slideLayouts.push(layout);
 
+      var stKey = classification.type;
+      if (!fileContentSamples[stKey]) fileContentSamples[stKey] = [];
+      if (texts.length > 0) {
+        var sample = texts.slice(0, 3).join(" | ").substring(0, 150);
+        if (sample.length > 10) fileContentSamples[stKey].push(sample);
+      }
+
       slideDetails.push({
         slideId: slide.objectId, slideType: classification.type,
         sectionTag: classification.type, text: combinedText,
@@ -498,9 +519,10 @@ function readAndExtractSlides(token, presId, file, logs) {
       archetypeLabel: DECK_ARCHETYPES[archetypeKey] ? DECK_ARCHETYPES[archetypeKey].label : archetypeKey,
       archetypeConfidence: deckClassification.confidence,
       sectionFlow: sectionFlow, slides: slideDetails, slideDNA: slideDNARecords,
+      contentSamples: fileContentSamples,
     };
 
-    logs.push("  Profile: " + file.name + " | archetype=" + archetypeKey + " | slides=" + slides.length + " | DNA=" + slideDNARecords.length);
+    logs.push("EXTRACT: " + file.name + " | archetype=" + archetypeKey + " | slides=" + slides.length + " | DNA=" + slideDNARecords.length + " | presId=" + presId.substring(0, 12) + "...");
     return profile;
   });
 }
@@ -538,7 +560,18 @@ function deepScanFiles(token, files, templateLibId, logs) {
     // For native Google Slides, read directly. For .pptx, copy to Google Slides first.
     if (isNativeSlides) {
       logs.push("SCAN: Reading native Google Slides: " + file.name + " (" + file.id.substring(0, 12) + "...)");
-      return scanPresentation(token, file.id, file, templateLibId, logs).then(function() {
+      return readAndExtractSlides(token, file.id, file, logs).then(function(profile) {
+        if (profile) {
+          deckProfiles.push(profile);
+          profile.slides.forEach(function(s) { allSlideTypes.push(s.slideType); allSlideLayouts.push(s.layout); allSlideTexts.push(s.text); });
+          Object.keys(profile.contentSamples || {}).forEach(function(k) {
+            if (!contentSamples[k]) contentSamples[k] = [];
+            contentSamples[k] = contentSamples[k].concat(profile.contentSamples[k]);
+          });
+          logs.push("  PIPELINE native: deckProfiles=" + deckProfiles.length + " totalSlides=" + allSlideTypes.length);
+        } else {
+          logs.push("  PIPELINE native: profile is null for " + file.name);
+        }
         return scanFile(index + 1);
       }).catch(function(err) {
         logs.push("  Error reading " + file.name + ": " + (err.message || String(err)));
@@ -571,6 +604,13 @@ function deepScanFiles(token, files, templateLibId, logs) {
         if (profile) {
           deckProfiles.push(profile);
           profile.slides.forEach(function(s) { allSlideTypes.push(s.slideType); allSlideLayouts.push(s.layout); allSlideTexts.push(s.text); });
+          Object.keys(profile.contentSamples || {}).forEach(function(k) {
+            if (!contentSamples[k]) contentSamples[k] = [];
+            contentSamples[k] = contentSamples[k].concat(profile.contentSamples[k]);
+          });
+          logs.push("  PIPELINE: deckProfiles=" + deckProfiles.length + " totalSlides=" + allSlideTypes.length);
+        } else {
+          logs.push("  PIPELINE: profile is null — extraction failed for " + file.name);
         }
         return scanFile(index + 1);
       }).catch(function(err) {
