@@ -159,19 +159,21 @@ function buildAssemblyPlan(slideIndex, archetype, offerings, geography, prospect
 
     var result = retrieveSlides(slideIndex, query, 3);
 
-    if (result.hasIndex && result.candidates.length > 0 && result.candidates[0].score >= 55) {
-      // Strong retrieval match — adapt from historical slide
+    if (result.hasIndex && result.candidates.length > 0 && result.candidates[0].score >= 45) {
+      // Strong retrieval match — clone/adapt from historical slide
       var best = result.candidates[0];
+      // If score >= 60 and has sourcePresentationId → true clone
+      var mode = (best.score >= 60 && best.sourcePresentationId) ? "clone" : "retrieved";
       plan.push({
         type: sectionType,
         label: st.label,
-        source: "retrieved",
+        source: mode,
         score: best.score,
         candidate: best,
         fallbackContent: null,
       });
-    } else if (result.hasIndex && result.candidates.length > 0) {
-      // Weak match — use as content inspiration but generate fresh
+    } else if (result.hasIndex && result.candidates.length > 0 && result.candidates[0].score >= 20) {
+      // Weak match — use as content inspiration
       plan.push({
         type: sectionType,
         label: st.label,
@@ -181,7 +183,7 @@ function buildAssemblyPlan(slideIndex, archetype, offerings, geography, prospect
         fallbackContent: null,
       });
     } else {
-      // No match — generate from scratch
+      // No match — generate from scratch (last resort)
       plan.push({
         type: sectionType,
         label: st.label,

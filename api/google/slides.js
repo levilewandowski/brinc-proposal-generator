@@ -359,13 +359,16 @@ function buildAssemblyPlan(slideIndex, dnaIndex, archetype, offerings, geography
     // 3. Combined score (70% text, 30% visual)
     var combinedScore = Math.floor(textScore * 0.7 + visualScore * 0.3);
 
-    // 4. Determine source based on combined score
-    // Clone threshold: 70+ with source presentation available
-    if (combinedScore >= 70 && bestDNA && bestDNA.sourcePresentationId) {
-      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "cloned", score: combinedScore, textScore: textScore, visualScore: visualScore, candidate: bestCandidate, dna: bestDNA });
-    } else if (combinedScore >= 55) {
+    // 4. Determine source — aggressively biased toward cloning and retrieval
+    // Clone: 60+ with source presentation available
+    // Retrieve: 45+ strong match
+    // Inspire: 20+ weak match
+    // Generate: <20 fallback only
+    if (combinedScore >= 60 && bestDNA && bestDNA.sourcePresentationId) {
+      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "clone", score: combinedScore, textScore: textScore, visualScore: visualScore, candidate: bestCandidate, dna: bestDNA });
+    } else if (combinedScore >= 45) {
       plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "retrieved", score: combinedScore, textScore: textScore, visualScore: visualScore, candidate: bestCandidate, dna: bestDNA });
-    } else if (combinedScore >= 35) {
+    } else if (combinedScore >= 20) {
       plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "inspired", score: combinedScore, textScore: textScore, visualScore: visualScore, candidate: bestCandidate, dna: bestDNA });
     } else {
       plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "generated", score: combinedScore, textScore: 0, visualScore: 0, candidate: null, dna: null });
@@ -396,6 +399,65 @@ function buildReferenceDNA(sectionType, archetype) {
     layoutFingerprint: fp,
     detectedComponents: [{ type: compType, confidence: 0.8 }],
   };
+}
+
+// ── Canonical Slide Modules ───────────────────────────────
+// Pre-approved institutional slides that are ALWAYS cloned 1:1.
+// Mapped by slide type — the retrieval engine finds the best match
+// and copies it directly. Never generated, never adapted.
+
+var CANONICAL_MODULES = {
+  brinc_intro:    { label: "Brinc Intro",     slideTypes: ["cover", "title_sentence", "why_brinc"],   defaultOn: true },
+  team:           { label: "Team",            slideTypes: ["team"],                                          defaultOn: true },
+  case_studies:   { label: "Case Studies",    slideTypes: ["case_study"],                                    defaultOn: false },
+  global_map:     { label: "Global Footprint",slideTypes: ["ecosystem"],                                     defaultOn: false },
+  metrics:        { label: "Metrics",         slideTypes: ["metrics"],                                       defaultOn: true },
+  timeline:       { label: "Timeline",        slideTypes: ["timeline"],                                      defaultOn: false },
+  next_steps:     { label: "Next Steps",      slideTypes: ["next_steps"],                                    defaultOn: true },
+};
+
+function buildCanonicalRequests(presId, modules, slideIndex, allReqs, logs) {
+  if (!modules || modules.length === 0 || !slideIndex || slideIndex.length === 0) {
+    logs.push("CANONICAL: no modules or no index");
+    return [];
+  }
+
+  logs.push("CANONICAL: building " + modules.length + " module(s)");
+  var appendedSlides = [];
+
+  modules.forEach(function(modKey) {
+    var mod = CANONICAL_MODULES[modKey];
+    if (!mod) { logs.push("CANONICAL: unknown module " + modKey); return; }
+
+    mod.slideTypes.forEach(function(st) {
+      var candidates = slideIndex.filter(function(s) {
+        return s.slideType === st && s.sourcePresentationId;
+      }).sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+
+      if (candidates.length === 0) {
+        logs.push("CANONICAL: no cloneable " + st + " for " + modKey);
+        return;
+      }
+
+      var best = candidates[0];
+      var sid = "canonical_" + modKey + "_" + st + "_" + Math.random().toString(36).substring(2, 8);
+      logs.push("CANONICAL: cloning " + st + " from " + (best.sourceDeck || "?") + " (score:" + (best.score || "?") + ")");
+
+      allReqs.push({ createSlide: { objectId: sid, insertionIndex: 999 } });
+      allReqs.push({
+        copySlide: {
+          objectId: sid,
+          sourceObjectId: best.sourceSlideId || best.slideId || "",
+          sourcePresentationId: best.sourcePresentationId,
+        }
+      });
+
+      appendedSlides.push({ type: st, source: "canonical", module: modKey, sourceDeck: best.sourceDeck, score: best.score || 0 });
+    });
+  });
+
+  logs.push("CANONICAL: queued " + appendedSlides.length + " canonical slide(s)");
+  return appendedSlides;
 }
 
 // ── Deck Coherence Engine ─────────────────────────────────
@@ -799,13 +861,14 @@ export default function handler(req, res) {
         var best = candidates.length > 0 ? candidates[0] : null;
         var score = best ? best.score : 0;
 
-        // Score thresholds
-        var CLONE_THRESHOLD = 70;
-        var RETRIEVE_THRESHOLD = 55;
-        var INSPIRE_THRESHOLD = 35;
+        // Score thresholds — aggressively biased toward cloning and retrieval
+        var CLONE_THRESHOLD = 60;
+        var RETRIEVE_THRESHOLD = 45;
+        var INSPIRE_THRESHOLD = 20;
 
         var source = "generated";
-        if (score >= RETRIEVE_THRESHOLD) source = "retrieved";
+        if (score >= CLONE_THRESHOLD && best && best.sourcePresentationId) source = "clone";
+        else if (score >= RETRIEVE_THRESHOLD) source = "retrieved";
         else if (score >= INSPIRE_THRESHOLD) source = "inspired";
 
         // Debug entry (capture before any modifications)
@@ -938,6 +1001,17 @@ export default function handler(req, res) {
         if (debug) debugReport.push({ slideNumber: slideIdx, type: planSlide.type, mode: "CANONICAL", reason: "CLASS B static slide", query: null, candidates: [], score: 0 });
       });
 
+      // ── STEP 5b: Append canonical modules (if requested) ──
+      var modules = body.modules || [];
+      if (modules.length > 0 && loadIndex) {
+        logs.push("CANONICAL: appending modules: [" + modules.join(", ") + "]");
+        var canonicalSlides = buildCanonicalRequests(presId, modules, (loadIndex.data || {}).slides || [], allReqs, logs);
+        canonicalSlides.forEach(function(s) {
+          sectionMap.push({ type: s.type, label: s.module, source: "canonical", score: s.score, slideIndex: slideIdx, class: "B" });
+          slideIdx++;
+        });
+      }
+
       logs.push("Total: " + allReqs.length + " requests, " + lineageRecords.length + " lineage");
 
       // ── STEP 6: batchUpdate ──
@@ -999,9 +1073,9 @@ export default function handler(req, res) {
               .then(function(fp) {
                 return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined, cloneErrors: cloneErrors.length > 0 ? cloneErrors : undefined };
               });
-          });
       });
-    });
+    }); // closes Promise.all([indexPromise, dnaPromise]).then() callback
+  }); // closes resolveWorkspaceRoot().then() callback
   }).then(function(result) {
     res.end(JSON.stringify(result));
   }).catch(function(err) {
