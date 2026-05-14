@@ -50,14 +50,18 @@ function resolveWorkspaceRoot(token, logs) {
   }
 
   return fetchFolderMetadata(token, RAW_DRIVE_ROOT, logs).then(function(meta) {
-    if (!meta) {
-      logs.push("WORKSPACE: Cannot access DRIVE_ROOT folder");
+    if (!meta || meta.error) {
+      var errMsg = meta && meta.error ? (meta.error.message || "unknown error") : "no response";
+      var errCode = meta && meta.error ? (meta.error.code || "?") : "?";
+      logs.push("WORKSPACE: Cannot access DRIVE_ROOT folder — error code=" + errCode + " message=" + errMsg);
       return {
         rootId: RAW_DRIVE_ROOT,
         rootName: "?",
         rootParentId: "",
         isAutoCorrected: false,
-        correctionReason: "Cannot fetch metadata for DRIVE_ROOT",
+        correctionReason: "Cannot fetch metadata for DRIVE_ROOT (code=" + errCode + "): " + errMsg,
+        rawRootId: RAW_DRIVE_ROOT,
+        diagnostics: ["Drive API error code=" + errCode + ": " + errMsg, "Folder ID in env var: " + RAW_DRIVE_ROOT.substring(0, 20) + "..."],
       };
     }
 
@@ -175,7 +179,9 @@ function getWorkspaceHealth(token, rootId, logs) {
   }
 
   return fetchFolderMetadata(token, rootId, logs).then(function(meta) {
-    if (!meta) {
+    if (!meta || meta.error) {
+      var errMsg = meta && meta.error ? (meta.error.message || "?") : "no response";
+      var errCode = meta && meta.error ? (meta.error.code || "?") : "?";
       return {
         healthy: false,
         rootFolderName: "?",
@@ -186,9 +192,10 @@ function getWorkspaceHealth(token, rootId, logs) {
         optionalFoldersPresent: [],
         optionalFoldersMissing: OPTIONAL_FOLDERS.slice(),
         pptxFiles: {},
-        indexedSlides: 0,
-        lastScanTimestamp: null,
-        diagnostics: ["Cannot access workspace root folder"],
+        diagnostics: [
+          "Cannot access workspace root folder (code=" + errCode + "): " + errMsg,
+          "Check that GOOGLE_DRIVE_FOLDER_ID env var is set to the correct folder ID",
+        ],
       };
     }
 
@@ -266,18 +273,23 @@ function fetchFolderMetadata(token, folderId, logs) {
     + "?fields=id,name,mimeType,parents,ownedByMe,owners(displayName),createdTime,webViewLink"
     + "&supportsAllDrives=true";
 
+  logs.push("WORKSPACE: Fetching metadata for " + folderId.substring(0, 20) + "...");
+
   return fetch(url, { headers: { Authorization: "Bearer " + token } })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (data.error) {
-        logs.push("WORKSPACE: Metadata error for " + folderId.substring(0, 12) + "...: " + JSON.stringify(data.error));
-        return null;
-      }
-      return data;
+    .then(function(r) {
+      logs.push("WORKSPACE: Metadata HTTP status=" + r.status);
+      return r.json().then(function(data) {
+        if (data.error) {
+          logs.push("WORKSPACE: Metadata error code=" + (data.error.code || "?") + " message=" + (data.error.message || "?"));
+          data._httpStatus = r.status;
+          return data; // Return the error object so caller can inspect it
+        }
+        return data;
+      });
     })
     .catch(function(err) {
-      logs.push("WORKSPACE: Metadata fetch error: " + (err.message || String(err)));
-      return null;
+      logs.push("WORKSPACE: Metadata fetch exception: " + (err.message || String(err)));
+      return { error: { code: -1, message: err.message || String(err) } };
     });
 }
 
@@ -296,19 +308,29 @@ function listFolderChildren(token, folderId, logs) {
       url += "&pageToken=" + pageToken;
     }
 
+    logs.push("WORKSPACE: Listing children of " + folderId.substring(0, 12) + "...");
+
     return fetch(url, { headers: { Authorization: "Bearer " + token } })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.error) {
-          logs.push("WORKSPACE: List error: " + JSON.stringify(data.error));
+      .then(function(r) {
+        logs.push("WORKSPACE: List children HTTP status=" + r.status);
+        return r.json().then(function(data) {
+          if (data.error) {
+            logs.push("WORKSPACE: List error code=" + (data.error.code || "?") + " message=" + (data.error.message || "?"));
+            return allItems;
+          }
+          var items = data.files || [];
+          logs.push("WORKSPACE: List returned " + items.length + " items");
+          items.forEach(function(f) {
+            if (f.mimeType === "application/vnd.google-apps.folder") {
+              logs.push("WORKSPACE:   folder: '" + f.name + "'");
+            }
+          });
+          allItems = allItems.concat(items);
+          if (data.nextPageToken) {
+            return fetchPage(data.nextPageToken);
+          }
           return allItems;
-        }
-        var items = data.files || [];
-        allItems = allItems.concat(items);
-        if (data.nextPageToken) {
-          return fetchPage(data.nextPageToken);
-        }
-        return allItems;
+        });
       })
       .catch(function(err) {
         logs.push("WORKSPACE: List fetch error: " + (err.message || String(err)));
@@ -331,12 +353,17 @@ function countPptxFiles(token, folderId, logs) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.error) {
-        logs.push("WORKSPACE: PPTX count error: " + JSON.stringify(data.error));
+        logs.push("WORKSPACE: PPTX count error code=" + (data.error.code || "?") + ": " + (data.error.message || "?"));
         return 0;
       }
-      return (data.files || []).length;
+      var count = (data.files || []).length;
+      logs.push("WORKSPACE: PPTX count for " + folderId.substring(0, 12) + "... = " + count);
+      return count;
     })
-    .catch(function() { return 0; });
+    .catch(function(err) {
+      logs.push("WORKSPACE: PPTX count exception: " + (err.message || String(err)));
+      return 0;
+    });
 }
 
 // ── 4. Raw DRIVE_ROOT accessor ────────────────────────────

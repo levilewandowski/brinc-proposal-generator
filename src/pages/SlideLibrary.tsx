@@ -128,6 +128,7 @@ interface WorkspaceHealth {
   };
   pptxFiles: Record<string, { folderName: string; folderId: string; count: number }>;
   diagnostics: string[];
+  apiLogs?: string[];
 }
 
 const SLIDE_TYPE_COLORS: Record<string, string> = {
@@ -451,6 +452,18 @@ export default function SlideLibrary() {
                     )}
                   </div>
 
+                  {/* Raw DRIVE_ROOT display for debugging */}
+                  {health.workspace?.rawRootId && (
+                    <div className="bg-white rounded p-2.5 border border-slate-200 mb-3">
+                      <p className="text-[10px] text-slate-500 font-medium">DRIVE_ROOT env var (raw)</p>
+                      <p className="text-xs font-mono text-slate-700 break-all">{health.workspace.rawRootId}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        Name: {health.workspace?.rawRootName || "?"}
+                        {health.workspace?.isAutoCorrected && " → corrected to parent"}
+                      </p>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                     <div className="bg-white rounded p-2.5 border border-slate-200">
                       <p className="text-[10px] text-slate-500 font-medium">Root Folder</p>
@@ -532,11 +545,40 @@ export default function SlideLibrary() {
                     </div>
                   )}
 
+                  {/* Fix instructions if DRIVE_ROOT is broken */}
+                  {health.diagnostics?.some((d: string) => d.includes("Cannot access") || d.includes("error code")) && (
+                    <div className="mt-3 bg-red-50 border border-red-200 rounded p-3">
+                      <p className="text-xs font-semibold text-red-700 mb-1.5">How to fix:</p>
+                      <ol className="text-[11px] text-red-600 space-y-1 list-decimal list-inside">
+                        <li>Open your Google Drive and find the <strong>"LEVI KIMI"</strong> parent folder</li>
+                        <li>Copy the folder ID from the URL (the part after <code>/folders/</code>)</li>
+                        <li>Go to your Vercel dashboard → Project Settings → Environment Variables</li>
+                        <li>Update <code>GOOGLE_DRIVE_FOLDER_ID</code> with the copied ID</li>
+                        <li>Redeploy the project (or wait for auto-deploy)</li>
+                      </ol>
+                      <p className="text-[11px] text-red-500 mt-2">
+                        Current value: <code className="bg-red-100 px-1 py-0.5 rounded">{health.workspace?.rawRootId || "?"}</code>
+                      </p>
+                    </div>
+                  )}
+
                   {/* Correction notice */}
                   {health.workspace?.correctionReason && (
                     <div className="mt-2 text-[11px] text-amber-600 bg-amber-100 rounded p-2">
                       {health.workspace.correctionReason}
                     </div>
+                  )}
+
+                  {/* Debug Logs (collapsible) */}
+                  {health.apiLogs && health.apiLogs.length > 0 && (
+                    <details className="mt-3">
+                      <summary className="text-[10px] text-slate-400 cursor-pointer hover:text-slate-600">
+                        API Debug Logs ({health.apiLogs.length} lines)
+                      </summary>
+                      <pre className="text-[10px] text-slate-500 overflow-auto max-h-64 mt-1 bg-slate-50 rounded p-2 border border-slate-100">
+                        {health.apiLogs.join("\n")}
+                      </pre>
+                    </details>
                   )}
                 </CardContent>
               </Card>

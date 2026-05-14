@@ -64,7 +64,7 @@ export default function handler(req, res) {
         },
         pptxFiles: health.pptxFiles,
         diagnostics: health.diagnostics,
-        logs: logs,
+        apiLogs: logs,
       }));
     });
 
