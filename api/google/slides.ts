@@ -263,35 +263,63 @@ export default function handler(req: any, res: any) {
               const currentParents = before.parents || ["root"];
               logs.push("Current parents: " + JSON.stringify(currentParents));
 
-              // Step B: Find or create target folder
-              const q = encodeURIComponent(
-                "mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='01 Generated Proposals' and trashed=false"
-              );
+              // Step B: Find or create target folder (with Shared Drive support)
+              // First, detect driveId of the root folder
               return fetch(
-                "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,name)&supportsAllDrives=true",
+                "https://www.googleapis.com/drive/v3/files/" + DRIVE_ROOT + "?fields=driveId&supportsAllDrives=true",
                 { headers: { Authorization: "Bearer " + accessToken } }
               )
                 .then((r) => r.json())
-                .then((search: any) => {
-                  const existing = search.files?.[0];
-                  if (existing) {
-                    logs.push("Found folder: " + existing.id + " (" + existing.name + ")");
-                    return { id: existing.id, currentParents };
-                  }
-                  // Create
-                  return fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
-                    method: "POST",
-                    headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      name: "01 Generated Proposals",
-                      mimeType: "application/vnd.google-apps.folder",
-                      parents: [DRIVE_ROOT],
-                    }),
-                  })
+                .then((rootMeta: any) => {
+                  const driveId = rootMeta.driveId || "";
+                  logs.push("driveId: " + (driveId || "(My Drive)"));
+
+                  // Search for existing folder with Shared Drive params
+                  const q = encodeURIComponent(
+                    "mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='01 Generated Proposals' and trashed=false"
+                  );
+                  const searchUrl =
+                    "https://www.googleapis.com/drive/v3/files?q=" + q +
+                    "&fields=files(id,name,createdTime)" +
+                    "&supportsAllDrives=true" +
+                    "&includeItemsFromAllDrives=true" +
+                    "&corpora=allDrives" +
+                    "&orderBy=createdTime";
+
+                  logs.push("Search URL: " + searchUrl.substring(0, 80) + "...");
+
+                  return fetch(searchUrl, { headers: { Authorization: "Bearer " + accessToken } })
                     .then((r) => r.json())
-                    .then((d: any) => {
-                      logs.push("Created folder: " + d.id);
-                      return { id: d.id, currentParents };
+                    .then((search: any) => {
+                      const files = search.files || [];
+                      logs.push("Search returned " + files.length + " folder(s)");
+
+                      if (files.length > 0) {
+                        // Prefer oldest existing folder
+                        const oldest = files[0];
+                        logs.push("Reusing oldest folder: " + oldest.id + " (" + oldest.name + ", " + oldest.createdTime + ")");
+                        if (files.length > 1) {
+                          logs.push("Note: " + files.length + " folders with same name exist");
+                        }
+                        return { id: oldest.id, currentParents };
+                      }
+
+                      // Create new folder
+                      logs.push("No existing folder found, creating...");
+                      return fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
+                        method: "POST",
+                        headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          name: "01 Generated Proposals",
+                          mimeType: "application/vnd.google-apps.folder",
+                          parents: [DRIVE_ROOT],
+                        }),
+                      })
+                        .then((r) => r.json())
+                        .then((d: any) => {
+                          logs.push("Created folder: " + d.id);
+                          return { id: d.id, currentParents };
+                        });
                     });
                 });
             })
