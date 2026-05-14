@@ -22,6 +22,17 @@ export default function ProposalView() {
   const [debugReport, setDebugReport] = useState<any[] | null>(null);
   const [cloneErrors, setCloneErrors] = useState<any[] | null>(null);
   const [debugMode, setDebugMode] = useState(false);
+  const [selectedModules, setSelectedModules] = useState<string[]>(["brinc_intro", "team", "metrics", "next_steps"]);
+
+  var CANONICAL_MODULES = [
+    { key: "brinc_intro", label: "Brinc Intro", desc: "Cover + title + why Brinc" },
+    { key: "team", label: "Team", desc: "Team slides" },
+    { key: "case_studies", label: "Case Studies", desc: "Relevant portfolio companies" },
+    { key: "global_map", label: "Global Footprint", desc: "Ecosystem + locations" },
+    { key: "metrics", label: "Metrics", desc: "Performance + portfolio metrics" },
+    { key: "timeline", label: "Timeline", desc: "Program timeline" },
+    { key: "next_steps", label: "Next Steps", desc: "Contact + next actions" },
+  ];
 
   if (!proposal) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -77,6 +88,7 @@ export default function ProposalView() {
           geography: proposal.geography || "UAE",
           patterns,
           debug: debugMode,
+          modules: selectedModules,
         }),
       });
 
@@ -147,6 +159,46 @@ export default function ProposalView() {
               </label>
             </div>
 
+            {/* Canonical Module Selector */}
+            <Card className="border-slate-200">
+              <CardContent className="py-3">
+                <p className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5" />
+                  Canonical Slide Modules
+                  <span className="text-[10px] font-normal text-slate-400">(cloned 1:1 from approved decks)</span>
+                </p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {CANONICAL_MODULES.map((mod) => (
+                    <label
+                      key={mod.key}
+                      className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded border cursor-pointer transition-colors ${
+                        selectedModules.includes(mod.key)
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedModules.includes(mod.key)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedModules([...selectedModules, mod.key]);
+                          } else {
+                            setSelectedModules(selectedModules.filter((m) => m !== mod.key));
+                          }
+                        }}
+                        className="rounded border-slate-300"
+                      />
+                      <div>
+                        <span className="font-medium">{mod.label}</span>
+                        <span className="block text-[10px] text-slate-400">{mod.desc}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Create Slides Button */}
             <Card className="border-[#1B2A4A]/20 bg-[#1B2A4A]/5">
               <CardContent className="py-4">
@@ -201,7 +253,8 @@ export default function ProposalView() {
                     {assemblyMap.map((sec: any, i: number) => (
                       <div key={i} className="flex items-center gap-3 text-sm py-1.5 px-2 rounded hover:bg-slate-50">
                         <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
-                          sec.source === "cloned" ? "bg-emerald-600 text-white" :
+                          sec.source === "clone" || sec.source === "cloned" ? "bg-purple-600 text-white" :
+                          sec.source === "canonical" ? "bg-[#1B2A4A] text-white" :
                           sec.source === "retrieved" ? "bg-green-500 text-white" :
                           sec.source === "inspired" ? "bg-amber-500 text-white" :
                           "bg-slate-300 text-slate-600"
@@ -209,12 +262,13 @@ export default function ProposalView() {
                         <span className="flex-1 font-medium text-slate-700">{sec.label || sec.type}</span>
                         <span className="text-[10px] text-slate-400">{sec.class || ""}</span>
                         <Badge variant="outline" className={`text-[10px] capitalize ${
-                          sec.source === "cloned" ? "border-emerald-200 text-emerald-700 bg-emerald-50" :
+                          sec.source === "clone" || sec.source === "cloned" ? "border-purple-200 text-purple-700 bg-purple-50" :
+                          sec.source === "canonical" ? "border-[#1B2A4A]/30 text-[#1B2A4A] bg-[#1B2A4A]/5" :
                           sec.source === "retrieved" ? "border-green-200 text-green-600 bg-green-50" :
                           sec.source === "inspired" ? "border-amber-200 text-amber-600 bg-amber-50" :
                           "border-slate-200 text-slate-500 bg-slate-50"
                         }`}>
-                          {sec.source === "cloned" ? "C" : sec.source === "retrieved" ? "R" : sec.source === "inspired" ? "I" : "G"}
+                          {sec.source === "clone" || sec.source === "cloned" ? "CLONE" : sec.source === "canonical" ? "CANON" : sec.source === "retrieved" ? "R" : sec.source === "inspired" ? "I" : "G"}
                           {sec.score > 0 ? ` ${sec.score}` : ""}
                         </Badge>
                       </div>
