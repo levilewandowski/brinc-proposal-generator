@@ -15,7 +15,8 @@ export default function handler(req: any, res: any) {
   }
 
   const body = req.body || {};
-  const accessToken = body.accessToken;
+  let accessToken = body.accessToken;
+  const refreshToken = body.refreshToken;
 
   if (!accessToken) {
     return res.status(400).json({ ok: false, error: "Missing accessToken" });
@@ -31,6 +32,34 @@ export default function handler(req: any, res: any) {
 
   const logs: string[] = [];
 
+  // Check if token needs refresh
+  function ensureToken() {
+    if (!refreshToken) return Promise.resolve();
+    return fetch("https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + accessToken)
+      .then((r) => {
+        if (r.ok) return;
+        // Token expired, refresh it
+        logs.push("Token expired, refreshing...");
+        return fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            refresh_token: refreshToken,
+            client_id: process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "",
+            client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
+            grant_type: "refresh_token",
+          }),
+        })
+          .then((r) => r.json())
+          .then((d: any) => {
+            if (d.access_token) {
+              accessToken = d.access_token;
+              logs.push("Token refreshed");
+            }
+          });
+      });
+  }
+
   // Helper to call Google APIs
   function gapi(url: string, init?: any) {
     return fetch(url, {
@@ -45,8 +74,9 @@ export default function handler(req: any, res: any) {
     );
   }
 
-  // 1. Create blank presentation
-  gapi("https://slides.googleapis.com/v1/presentations", {
+  // 1. Ensure token is valid, then create presentation
+  ensureToken().then(() => {
+    return gapi("https://slides.googleapis.com/v1/presentations", {
     method: "POST",
     body: JSON.stringify({ title }),
   })
@@ -320,6 +350,7 @@ export default function handler(req: any, res: any) {
         };
       });
     })
+  })
     .then((result: any) => res.status(200).json(result))
     .catch((err: any) => {
       console.error("[Slides] Error:", err);
