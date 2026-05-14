@@ -82,7 +82,7 @@ async function copyTemplate(accessToken: string): Promise<string | null> {
 
 // ---- HANDLER ----
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   res.setHeader("Content-Type", "application/json");
 
   // GET diagnostic
