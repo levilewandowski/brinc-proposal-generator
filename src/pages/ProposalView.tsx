@@ -56,7 +56,7 @@ export default function ProposalView() {
 
       toast.info("Creating Google Slides presentation...");
 
-      // Step 2: Create slides with patterns
+      // Step 2: Create slides with archetype + patterns
       const res = await fetch("/api/google/slides", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -69,6 +69,8 @@ export default function ProposalView() {
           suggestedAngle: proposal.suggestedAngle,
           includeOverview: proposal.includeOverview,
           includeCaseStudies: proposal.includeCaseStudies,
+          archetype: proposal.archetype || "accelerator",
+          geography: proposal.geography || "UAE",
           patterns,
         }),
       });

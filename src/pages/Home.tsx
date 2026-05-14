@@ -30,6 +30,19 @@ const CASE_STUDY_OPTIONS = [
   "Bahrain EDB", "Oman Accelerator",
 ];
 
+const ARCHETYPE_OPTIONS = [
+  { key: "accelerator", label: "Accelerator Program", icon: "Zap" },
+  { key: "incubator", label: "Incubator / Venture Building", icon: "FlaskConical" },
+  { key: "soft_landing", label: "Soft Landing / Market Entry", icon: "Plane" },
+  { key: "sandbox", label: "Sandbox / Regulator Program", icon: "Shield" },
+  { key: "innovation_challenge", label: "Innovation Challenge", icon: "Trophy" },
+  { key: "corporate_innovation", label: "Corporate Innovation", icon: "Building2" },
+  { key: "ai_training", label: "AI / Corporate Training", icon: "Brain" },
+  { key: "government_capability", label: "Government Capability Building", icon: "Landmark" },
+  { key: "executive_workshop", label: "Executive Workshop", icon: "Users" },
+  { key: "venture_building", label: "Venture Building", icon: "Rocket" },
+];
+
 // Hardcoded to match Google Cloud OAuth credential
 const GOOGLE_CLIENT_ID = "711074142580-2lh3uth8dn38hjmoth12roi8uomdaak2.apps.googleusercontent.com";
 const GOOGLE_REDIRECT_URI = "https://brinc-proposal-generator.vercel.app/google/callback";
@@ -48,6 +61,8 @@ export default function Home() {
   const [includeOverview, setIncludeOverview] = useState(false);
   const [includeCaseStudies, setIncludeCaseStudies] = useState(false);
   const [otherNotes, setOtherNotes] = useState("");
+  const [selectedArchetype, setSelectedArchetype] = useState("accelerator");
+  const [geography, setGeography] = useState("");
   const [showLibrary, setShowLibrary] = useState(false);
   const [googleEmail, setGoogleEmail] = useState<string | null>(() => {
     return localStorage.getItem("brinc_google_email");
@@ -136,6 +151,7 @@ export default function Home() {
     const proposal = {
       id: mockId, proposalType, prospectName, prospectEmail, prospectLinkedin, prospectCompany,
       selectedOfferings, suggestedAngle, includeOverview, includeCaseStudies, otherNotes,
+      archetype: selectedArchetype, geography: geography || "UAE",
       status: "ready", createdAt: new Date(),
     };
     const existing = JSON.parse(localStorage.getItem("brinc_proposals") || "[]");
@@ -291,6 +307,24 @@ export default function Home() {
                 <CardHeader className="pb-3"><CardTitle className="text-base text-[#1B2A4A] flex items-center gap-2"><Sparkles className="w-4 h-4" />Suggested Angle</CardTitle><CardDescription>Quick notes from the meeting</CardDescription></CardHeader>
                 <CardContent>
                   <Textarea placeholder="They want to launch an AI-focused accelerator in Q3. Key concerns: founder quality, mentorship beyond capital, GCC market access. Emphasize our Asia pipeline and VentureVerse platform." value={suggestedAngle} onChange={(e) => setSuggestedAngle(e.target.value)} rows={5} className="resize-none" />
+                </CardContent>
+              </Card>
+
+              <Card className="border-slate-200 shadow-sm">
+                <CardHeader className="pb-3"><CardTitle className="text-base text-[#1B2A4A]">Deck Archetype</CardTitle><CardDescription>Select the proposal type for structure</CardDescription></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    {ARCHETYPE_OPTIONS.map((opt) => (
+                      <button key={opt.key} onClick={() => setSelectedArchetype(opt.key)}
+                        className={`p-2.5 rounded-lg border text-left transition-all text-xs ${selectedArchetype === opt.key ? "border-[#1B2A4A] bg-[#1B2A4A]/5 font-medium" : "border-slate-200 hover:border-slate-300"}`}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div>
+                    <Label>Geography</Label>
+                    <Input placeholder="UAE / GCC / Global" value={geography} onChange={(e) => setGeography(e.target.value)} className="mt-1" />
+                  </div>
                 </CardContent>
               </Card>
             </div>
