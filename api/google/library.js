@@ -8,6 +8,11 @@ import {
 } from "./archetypes.js";
 
 import {
+  extractSlideDNA,
+  buildDNAIndex,
+} from "./dna.js";
+
+import {
   buildSlideIndex,
   saveIndexToDrive,
 } from "./retrieval.js";
@@ -40,9 +45,6 @@ export default function handler(req, res) {
   if (!token) return res.status(400).json({ error: "Missing accessToken" });
 
   var logs = [];
-  var scanMode = req.query.mode || "full";
-
-  logs.push("Scan mode: " + scanMode);
   logs.push("DRIVE_ROOT: " + DRIVE_ROOT.substring(0, 15) + "...");
 
   var listUrl = "https://www.googleapis.com/drive/v3/files?q="
@@ -118,23 +120,27 @@ export default function handler(req, res) {
     logs.push("Deep scanning " + filesToScan.length + " file(s)...");
 
     return deepScanFiles(token, filesToScan, logs).then(function(scanResult) {
-      // Build and persist slide index
-      logs.push("Building slide index...");
+      // Build and persist text index
+      logs.push("Building text index...");
       var slideIndex = buildSlideIndex(scanResult);
-      logs.push("Index: " + slideIndex.slides.length + " slides indexed");
+      logs.push("Text index: " + slideIndex.slides.length + " slides");
+
+      // Build and persist DNA index
+      logs.push("Building DNA index...");
+      var dnaIndex = buildDNAIndex(scanResult.deckProfiles);
+      logs.push("DNA index: " + dnaIndex.slides.length + " slides, components: " + JSON.stringify(dnaIndex.componentCounts));
 
       return saveIndexToDrive(token, slideIndex, logs).then(function() {
+        return saveDNAToDrive(token, dnaIndex, logs);
+      }).then(function() {
         return res.end(JSON.stringify({
           ok: true,
           totalPptxFiles: allFiles.length,
           scannedFiles: filesToScan.length,
           fileList: allFiles.map(function(f) { return { folder: f.folder, name: f.name, modifiedTime: f.modifiedTime }; }),
           ...scanResult,
-          slideIndex: {
-            slideCount: slideIndex.slides.length,
-            deckCount: slideIndex.decks.length,
-            builtAt: slideIndex.builtAt,
-          },
+          slideIndex: { slideCount: slideIndex.slides.length, deckCount: slideIndex.decks.length, builtAt: slideIndex.builtAt },
+          dnaIndex: { slideCount: dnaIndex.slides.length, componentCounts: dnaIndex.componentCounts, builtAt: dnaIndex.builtAt },
           logs: logs,
         }));
       });
@@ -146,16 +152,13 @@ export default function handler(req, res) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════
-//  DEEP FILE SCAN — Archetype + Slide Classification
-// ═══════════════════════════════════════════════════════════
+// ── Deep File Scan ────────────────────────────────────────
 
 function deepScanFiles(token, files, logs) {
   var deckProfiles = [];
   var allSlideTexts = [];
   var allSlideTypes = [];
   var allSlideLayouts = [];
-  var sectionFlowCounts = {};
   var contentSamples = {};
   var archetypeCounts = {};
 
@@ -195,9 +198,10 @@ function deepScanFiles(token, files, logs) {
 
       var tempId = copied.data.id;
 
+      // Request FULL slide data including element properties for DNA extraction
       return gapi(token,
         "https://slides.googleapis.com/v1/presentations/" + tempId
-        + "?fields=presentationId,title,slides(objectId,slideProperties(layout(objectId,predefinedLayout)),pageElements(shape(shapeType),shape(text(textElements(content,textRun(content,style(bold,fontSize,foregroundColor))))))))"
+        + "?fields=presentationId,title,slides(objectId,slideProperties(layout(objectId,predefinedLayout)),pageElements(objectId,transform(translateX,translateY,scaleX,scaleY,rotate),size(width(height,magnitude),height(height,magnitude)),shape(objectId,shapeType,shapeProperties(shapeBackgroundFill(solidFill(color(rgbColor)))),text(textElements(content,textRun(content,style(bold,fontSize,foregroundColor(opaqueColor(rgbColor))))))),image(contentUrl)))"
       ).then(function(pres) {
         var slides = pres.data.slides || [];
         logs.push("  " + file.name + ": " + slides.length + " slides");
@@ -207,6 +211,7 @@ function deepScanFiles(token, files, logs) {
         var slideLayouts = [];
         var sectionFlow = [];
         var slideDetails = [];
+        var slideDNARecords = [];
 
         slides.forEach(function(slide, sIdx) {
           var texts = [];
@@ -231,13 +236,11 @@ function deepScanFiles(token, files, logs) {
           var combinedText = texts.join(" ");
           slideTexts.push(combinedText);
 
-          // Classify slide type
           var classification = classifySlide(texts);
           slideTypes.push(classification.type);
           allSlideTypes.push(classification.type);
           sectionFlow.push(classification.type);
 
-          // Determine layout
           var layout = "text_only";
           if (shapeCount > 4) layout = "complex";
           else if (boldTexts.length > 0 && texts.length > 2) layout = "heading_body_bullets";
@@ -246,7 +249,6 @@ function deepScanFiles(token, files, logs) {
           slideLayouts.push(layout);
           allSlideLayouts.push(layout);
 
-          // Collect content samples per slide type
           var stKey = classification.type;
           if (!contentSamples[stKey]) contentSamples[stKey] = [];
           if (texts.length > 0) {
@@ -254,7 +256,6 @@ function deepScanFiles(token, files, logs) {
             if (sample.length > 10) contentSamples[stKey].push(sample);
           }
 
-          // Store slide detail for indexing
           slideDetails.push({
             slideId: slide.objectId,
             slideType: classification.type,
@@ -270,8 +271,11 @@ function deepScanFiles(token, files, logs) {
         var archetypeKey = deckClassification.archetype;
         archetypeCounts[archetypeKey] = (archetypeCounts[archetypeKey] || 0) + 1;
 
-        var flowKey = sectionFlow.join(" > ");
-        sectionFlowCounts[flowKey] = (sectionFlowCounts[flowKey] || 0) + 1;
+        // Extract DNA for each slide (need full slide data)
+        slides.forEach(function(slide, i) {
+          var dna = extractSlideDNA(slide, slideTypes[i], archetypeKey, file.name, file.modifiedTime);
+          if (dna) slideDNARecords.push(dna);
+        });
 
         var profile = {
           fileName: file.name,
@@ -284,6 +288,7 @@ function deepScanFiles(token, files, logs) {
           archetypeConfidence: deckClassification.confidence,
           sectionFlow: sectionFlow,
           slides: slideDetails,
+          slideDNA: slideDNARecords,
         };
 
         deckProfiles.push(profile);
@@ -310,4 +315,56 @@ function deepScanFiles(token, files, logs) {
   }
 
   return scanFile(0);
+}
+
+// ── Save DNA Index to Drive ───────────────────────────────
+
+function saveDNAToDrive(token, dnaIndex, logs) {
+  return getOrCreateIndexFolder(token).then(function(folderId) {
+    var q = encodeURIComponent("mimeType='application/json' and '" + folderId + "' in parents and name='slide_dna.json' and trashed=false");
+    return fetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true", {
+      headers: { Authorization: "Bearer " + token }
+    }).then(function(r) { return r.json(); }).then(function(search) {
+      var existingId = search.files && search.files[0] ? search.files[0].id : null;
+      var body = JSON.stringify(dnaIndex, null, 2);
+
+      if (existingId) {
+        return fetch("https://www.googleapis.com/upload/drive/v3/files/" + existingId + "?uploadType=media&supportsAllDrives=true", {
+          method: "PATCH",
+          headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+          body: body,
+        }).then(function() {
+          logs.push("Updated DNA index: " + existingId);
+          return existingId;
+        });
+      } else {
+        var metadata = { name: "slide_dna.json", mimeType: "application/json", parents: [folderId] };
+        var form = new FormData();
+        form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+        form.append("file", new Blob([body], { type: "application/json" }));
+        return fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + token },
+          body: form,
+        }).then(function(r) { return r.json(); }).then(function(file) {
+          logs.push("Created DNA index: " + file.id);
+          return file.id;
+        });
+      }
+    });
+  });
+}
+
+function getOrCreateIndexFolder(token) {
+  var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='06 Indexes' and trashed=false");
+  return fetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives", {
+    headers: { Authorization: "Bearer " + token }
+  }).then(function(r) { return r.json(); }).then(function(search) {
+    if (search.files && search.files[0]) return search.files[0].id;
+    return fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "06 Indexes", mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_ROOT] }),
+    }).then(function(r) { return r.json(); }).then(function(folder) { return folder.id; });
+  });
 }

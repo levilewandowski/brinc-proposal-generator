@@ -141,7 +141,8 @@ function rectangle(id, pageId, x, y, w, h, color) {
       objectId: id,
       shapeProperties: { shapeBackgroundFill: { solidFill: { color: { rgbColor: color } } } },
       fields: "shapeBackgroundFill.solidFill.color"
-    } } });
+    } });
+  }
   return reqs;
 }
 
@@ -316,21 +317,83 @@ function retrieveSlides(slideIndex, query, topN) {
   };
 }
 
-function buildAssemblyPlan(slideIndex, archetype, offerings, geography) {
+function buildAssemblyPlan(slideIndex, dnaIndex, archetype, offerings, geography) {
   var arch = ARCHETYPES[archetype] || ARCHETYPES.accelerator;
+  var rules = COMPONENT_RULES[archetype] || COMPONENT_RULES.accelerator;
   var plan = [];
-  arch.sectionOrder.forEach(function(sectionType) {
+
+  arch.sectionOrder.forEach(function(sectionType, idx) {
     var query = { slideType: sectionType, archetype: archetype, keywords: SLIDE_TYPE_SIGNALS[sectionType] || [], geography: geography, offerings: offerings };
+
+    // 1. Text-based retrieval
     var result = retrieveSlides(slideIndex, query, 3);
-    if (result.hasIndex && result.candidates.length > 0 && result.candidates[0].score >= 55) {
-      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "retrieved", score: result.candidates[0].score, candidate: result.candidates[0] });
-    } else if (result.hasIndex && result.candidates.length > 0) {
-      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "inspired", score: result.candidates[0].score, candidate: result.candidates[0] });
+    var textScore = result.hasIndex && result.candidates.length > 0 ? result.candidates[0].score : 0;
+    var bestCandidate = result.hasIndex && result.candidates.length > 0 ? result.candidates[0] : null;
+
+    // 2. Visual similarity from DNA index
+    var visualScore = 0;
+    var bestDNA = null;
+    if (dnaIndex && dnaIndex.slides && dnaIndex.slides.length > 0) {
+      // Find DNA entries matching this section type
+      var matchingDNA = dnaIndex.slides.filter(function(d) { return d.slideType === sectionType; });
+      if (matchingDNA.length > 0) {
+        // Score against a synthetic reference (what we'd generate)
+        var refDNA = buildReferenceDNA(sectionType, archetype);
+        var scored = matchingDNA.map(function(d) {
+          return { dna: d, vScore: scoreVisualSimilarity(refDNA, d) };
+        }).sort(function(a, b) { return b.vScore - a.vScore; });
+        visualScore = scored[0].vScore;
+        bestDNA = scored[0].dna;
+        if (bestDNA && (!bestCandidate || bestDNA.text)) {
+          bestCandidate = bestCandidate || {};
+          bestCandidate.text = bestCandidate.text || (bestDNA.text ? bestDNA.text.substring(0, 300) : "");
+          bestCandidate.sourceDeck = bestCandidate.sourceDeck || bestDNA.sourceDeck;
+          bestCandidate.sourcePresentationId = bestDNA.sourcePresentationId || "";
+          bestCandidate.sourceSlideId = bestDNA.slideId || "";
+        }
+      }
+    }
+
+    // 3. Combined score (70% text, 30% visual)
+    var combinedScore = Math.floor(textScore * 0.7 + visualScore * 0.3);
+
+    // 4. Determine source based on combined score
+    // Clone threshold: 70+ with source presentation available
+    if (combinedScore >= 70 && bestDNA && bestDNA.sourcePresentationId) {
+      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "cloned", score: combinedScore, textScore: textScore, visualScore: visualScore, candidate: bestCandidate, dna: bestDNA });
+    } else if (combinedScore >= 55) {
+      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "retrieved", score: combinedScore, textScore: textScore, visualScore: visualScore, candidate: bestCandidate, dna: bestDNA });
+    } else if (combinedScore >= 35) {
+      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "inspired", score: combinedScore, textScore: textScore, visualScore: visualScore, candidate: bestCandidate, dna: bestDNA });
     } else {
-      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "generated", score: 0, candidate: null });
+      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "generated", score: combinedScore, textScore: 0, visualScore: 0, candidate: null, dna: null });
     }
   });
   return plan;
+}
+
+/**
+ * Build a reference DNA for a section type to compare against historical slides.
+ */
+function buildReferenceDNA(sectionType, archetype) {
+  var componentMap = {
+    cover: { elementCount: 6, textElementCount: 4, hasDivider: true, hasImage: false, avgFontSize: 22 },
+    title_sentence: { elementCount: 4, textElementCount: 2, hasDivider: false, hasImage: false, avgFontSize: 30 },
+    executive_summary: { elementCount: 5, textElementCount: 4, hasDivider: true, hasImage: false, avgFontSize: 14 },
+    approach: { elementCount: 8, textElementCount: 6, hasDivider: true, hasImage: false, avgFontSize: 13 },
+    timeline: { elementCount: 10, textElementCount: 5, hasDivider: true, hasImage: false, avgFontSize: 11 },
+    metrics_grid: { elementCount: 10, textElementCount: 8, hasDivider: true, hasImage: false, avgFontSize: 20 },
+    case_study: { elementCount: 6, textElementCount: 5, hasDivider: true, hasImage: false, avgFontSize: 13 },
+    why_brinc: { elementCount: 10, textElementCount: 8, hasDivider: true, hasImage: false, avgFontSize: 18 },
+  };
+  var fp = componentMap[sectionType] || { elementCount: 5, textElementCount: 4, hasDivider: true, hasImage: false, avgFontSize: 14 };
+  var compType = sectionType === "cover" ? "navy_cover" : sectionType === "title_sentence" ? "title_sentence" : sectionType === "timeline" ? "timeline" : sectionType === "why_brinc" ? "metrics_grid" : sectionType === "approach" ? "two_column" : "section_header";
+  return {
+    slideType: sectionType,
+    archetype: archetype,
+    layoutFingerprint: fp,
+    detectedComponents: [{ type: compType, confidence: 0.8 }],
+  };
 }
 
 function adaptRetrievedContent(originalText, prospectCompany, offerings, geography) {
@@ -377,6 +440,92 @@ function loadIndexFromDrive(token, logs) {
     logs.push("Index load error: " + err.message);
     return null;
   });
+}
+
+// ── DNA Index Loading ─────────────────────────────────────
+
+function loadDNAIndexFromDrive(token, logs) {
+  var q1 = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='06 Indexes' and trashed=false");
+  return fetch("https://www.googleapis.com/drive/v3/files?q=" + q1 + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives", {
+    headers: { Authorization: "Bearer " + token }
+  }).then(function(r) { return r.json(); }).then(function(search) {
+    if (!search.files || search.files.length === 0) { logs.push("No 06 Indexes folder — DNA unavailable"); return null; }
+    var folderId = search.files[0].id;
+    var q2 = encodeURIComponent("mimeType='application/json' and '" + folderId + "' in parents and name='slide_dna.json' and trashed=false");
+    return fetch("https://www.googleapis.com/drive/v3/files?q=" + q2 + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true", {
+      headers: { Authorization: "Bearer " + token }
+    }).then(function(r) { return r.json(); }).then(function(search2) {
+      if (!search2.files || search2.files.length === 0) { logs.push("No DNA index — visual scoring unavailable"); return null; }
+      var fileId = search2.files[0].id;
+      return fetch("https://www.googleapis.com/drive/v3/files/" + fileId + "?alt=media&supportsAllDrives=true", {
+        headers: { Authorization: "Bearer " + token }
+      }).then(function(r) { return r.json(); }).then(function(dna) {
+        logs.push("Loaded DNA: " + (dna.slides || []).length + " slides");
+        return dna;
+      });
+    });
+  }).catch(function(err) { logs.push("DNA load error: " + err.message); return null; });
+}
+
+// ── Visual Similarity Scoring ────────────────────────────
+
+function scoreVisualSimilarity(dnaA, dnaB) {
+  if (!dnaA || !dnaB || !dnaA.layoutFingerprint || !dnaB.layoutFingerprint) return 0;
+  var fpA = dnaA.layoutFingerprint, fpB = dnaB.layoutFingerprint;
+  var score = 0, maxScore = 0;
+  // Element count (15)
+  var countDiff = Math.abs(fpA.elementCount - fpB.elementCount);
+  score += Math.max(0, 15 - countDiff * 3); maxScore += 15;
+  // Has divider match (10)
+  if (fpA.hasDivider === fpB.hasDivider) { score += 10; } maxScore += 10;
+  // Has image match (10)
+  if (fpA.hasImage === fpB.hasImage) { score += 10; } maxScore += 10;
+  // Avg font size (10)
+  var fontDiff = Math.abs(fpA.avgFontSize - fpB.avgFontSize);
+  score += Math.max(0, 10 - fontDiff); maxScore += 10;
+  // Text element count (10)
+  var textDiff = Math.abs(fpA.textElementCount - fpB.textElementCount);
+  score += Math.max(0, 10 - textDiff * 2); maxScore += 10;
+  // Component overlap (25)
+  if (dnaA.detectedComponents && dnaB.detectedComponents) {
+    var sigA = dnaA.detectedComponents.map(function(c) { return c.type; });
+    var sigB = dnaB.detectedComponents.map(function(c) { return c.type; });
+    var shared = sigA.filter(function(s) { return sigB.indexOf(s) >= 0; });
+    score += shared.length > 0 ? 25 : 0;
+  }
+  maxScore += 25;
+  return maxScore > 0 ? Math.floor(score * 100 / maxScore) : 0;
+}
+
+// ── Archetype Component Rules ────────────────────────────
+
+var COMPONENT_RULES = {
+  accelerator:      { preferred: ["timeline","metrics_grid","two_column","case_study_card"], rhythm: ["header","content","visual","content","data","content","next"] },
+  incubator:        { preferred: ["two_column","section_header","case_study_card"], rhythm: ["header","content","content","visual","content","next"] },
+  soft_landing:     { preferred: ["section_header","two_column"], rhythm: ["header","content","visual","content","data","next"] },
+  sandbox:          { preferred: ["two_column","section_header"], rhythm: ["header","content","content","data","content","next"] },
+  innovation_challenge: { preferred: ["metrics_grid","timeline","case_study_card"], rhythm: ["header","visual","content","data","content","next"] },
+  corporate_innovation: { preferred: ["two_column","section_header"], rhythm: ["header","content","visual","content","data","next"] },
+  ai_training:      { preferred: ["section_header","two_column"], rhythm: ["header","content","content","visual","next"] },
+  government_capability: { preferred: ["section_header","metrics_grid"], rhythm: ["sentence","header","visual","content","data","content","next"] },
+  executive_workshop: { preferred: ["section_header","two_column"], rhythm: ["header","content","content","next"] },
+  venture_building: { preferred: ["two_column","section_header","case_study_card"], rhythm: ["header","content","visual","content","next"] },
+};
+
+// ── Template Cloning ──────────────────────────────────────
+
+/**
+ * Build a copySlide request to physically clone a historical slide.
+ * The source presentation must be a Google Slides file accessible to the user.
+ */
+function buildCloneSlideRequest(newSlideId, sourcePresentationId, sourceSlideId) {
+  return {
+    copySlide: {
+      objectId: newSlideId,
+      sourceObjectId: sourceSlideId,
+      sourcePresentationId: sourcePresentationId,
+    }
+  };
 }
 
 // ── Synthetic Content Generator ───────────────────────────
@@ -459,23 +608,30 @@ export default function handler(req, res) {
     });
   }
 
-  // Load slide index in parallel
+  // Load both indexes in parallel
   var indexPromise = tokenPromise.then(function() {
     return loadIndexFromDrive(accessToken, logs);
   });
+  var dnaPromise = tokenPromise.then(function() {
+    return loadDNAIndexFromDrive(accessToken, logs);
+  });
 
-  indexPromise.then(function(slideIndex) {
-    // Build assembly plan
+  Promise.all([indexPromise, dnaPromise]).then(function(results) {
+    var slideIndex = results[0];
+    var dnaIndex = results[1];
+
+    // Build assembly plan with DNA + visual similarity
     var plan;
     if (slideIndex && slideIndex.slides && slideIndex.slides.length > 0) {
-      plan = buildAssemblyPlan(slideIndex, archetypeKey, offerings, geo);
+      plan = buildAssemblyPlan(slideIndex, dnaIndex, archetypeKey, offerings, geo);
+      var cloned = plan.filter(function(s) { return s.source === "cloned"; }).length;
       var retrieved = plan.filter(function(s) { return s.source === "retrieved"; }).length;
       var inspired = plan.filter(function(s) { return s.source === "inspired"; }).length;
       var generated = plan.filter(function(s) { return s.source === "generated"; }).length;
-      logs.push("Plan: " + retrieved + " retrieved, " + inspired + " inspired, " + generated + " generated");
+      logs.push("Plan: " + cloned + " cloned, " + retrieved + " retrieved, " + inspired + " inspired, " + generated + " generated");
     } else {
       logs.push("No index — generating synthetically");
-      plan = arch.sectionOrder.map(function(st) { return { type: st, label: st.replace(/_/g, " "), source: "generated", score: 0, candidate: null }; });
+      plan = arch.sectionOrder.map(function(st) { return { type: st, label: st.replace(/_/g, " "), source: "generated", score: 0, candidate: null, dna: null }; });
     }
 
     // Create presentation
@@ -499,7 +655,16 @@ export default function handler(req, res) {
         slideIdx++;
 
         var result;
-        if (sec.source === "retrieved" && sec.candidate) {
+
+        if (sec.source === "cloned" && sec.dna && sec.dna.sourcePresentationId) {
+          // ── TEMPLATE CLONING: physically copy the historical slide ──
+          var cloneReq = buildCloneSlideRequest(sid, sec.dna.sourcePresentationId, sec.dna.slideId);
+          allReqs.push(cloneReq);
+          sectionMap.push({ type: sec.type, label: sec.label, source: "cloned", score: sec.score, textScore: sec.textScore || 0, visualScore: sec.visualScore || 0, slideIndex: slideIdx });
+          logs.push("  [C] " + sec.type + " (score: " + sec.score + ", visual: " + (sec.visualScore || 0) + ") from " + sec.dna.sourceDeck);
+          return;
+
+        } else if (sec.source === "retrieved" && sec.candidate) {
           var adaptedText = adaptRetrievedContent(sec.candidate.text, prospectCompany, offerings, geo);
           var adaptedLines = adaptedText.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
           if (adaptedLines.length === 0) adaptedLines = [adaptedText.substring(0, 300)];
@@ -523,7 +688,7 @@ export default function handler(req, res) {
           var builderArgs = [sid].concat(result.args || []);
           var reqs = result.builder.apply(null, builderArgs);
           allReqs = allReqs.concat(reqs);
-          sectionMap.push({ type: sec.type, label: sec.label, source: sec.source, score: sec.score, slideIndex: slideIdx });
+          sectionMap.push({ type: sec.type, label: sec.label, source: sec.source, score: sec.score, textScore: sec.textScore || 0, visualScore: sec.visualScore || 0, slideIndex: slideIdx });
         }
       });
 
