@@ -4,5 +4,22 @@
       "source": "/google/callback",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/test.ts": {
+      "maxDuration": 30
+    },
+    "api/create.ts": {
+      "maxDuration": 30
+    },
+    "api/googleslides.ts": {
+      "maxDuration": 30
+    },
+    "api/googletoken.ts": {
+      "maxDuration": 30
+    },
+    "api/googlecallback.ts": {
+      "maxDuration": 30
+    }
+  }
 }
