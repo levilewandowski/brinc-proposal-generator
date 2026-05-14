@@ -6,7 +6,7 @@ import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
 import { toast, Toaster } from "sonner";
 import {
-  ArrowLeft, FileText, ExternalLink, Sparkles, User, Building2, Mail, Linkedin, Loader2, CheckCircle,
+  ArrowLeft, FileText, ExternalLink, Sparkles, User, Building2, Mail, Linkedin, Loader2, CheckCircle, Library,
 } from "lucide-react";
 
 export default function ProposalView() {
@@ -38,8 +38,25 @@ export default function ProposalView() {
     const refreshToken = localStorage.getItem("brinc_google_refresh_token") || "";
     try {
       setCreating(true);
+      toast.info("Scanning library for patterns...");
+
+      // Step 1: Scan library for patterns
+      let patterns = null;
+      try {
+        const libRes = await fetch("/api/google/library?accessToken=" + encodeURIComponent(accessToken));
+        const libData = await libRes.json();
+        if (libData.ok && libData.patterns) {
+          patterns = libData.patterns;
+          toast.success(`Library scan: ${libData.scannedFiles || 0} file(s) analyzed`);
+          console.log("[Library] Patterns:", patterns);
+        }
+      } catch (libErr) {
+        console.warn("[Library] Scan failed, using defaults:", libErr);
+      }
+
       toast.info("Creating Google Slides presentation...");
 
+      // Step 2: Create slides with patterns
       const res = await fetch("/api/google/slides", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -52,6 +69,7 @@ export default function ProposalView() {
           suggestedAngle: proposal.suggestedAngle,
           includeOverview: proposal.includeOverview,
           includeCaseStudies: proposal.includeCaseStudies,
+          patterns,
         }),
       });
 
@@ -61,7 +79,8 @@ export default function ProposalView() {
       }
 
       setSlidesUrl(data.webViewLink);
-      toast.success(`Slides created: ${data.slideCount} slides`);
+      const sectionFlow = data.sectionFlow || [];
+      toast.success(`Slides created: ${data.slideCount} slides${sectionFlow.length > 0 ? " (" + sectionFlow.join(" > ") + ")" : ""}`);
     } catch (err: any) {
       console.error("[Create Slides] Error:", err);
       toast.error("Failed to create slides: " + (err.message || String(err)));
