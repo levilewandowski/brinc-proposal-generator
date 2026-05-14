@@ -396,6 +396,99 @@ function buildReferenceDNA(sectionType, archetype) {
   };
 }
 
+// ── Deck Coherence Engine ─────────────────────────────────
+
+function applyCoherence(plan, archetype) {
+  var rhythmMap = {
+    accelerator: ["header", "content", "visual", "content", "data", "content", "next"],
+    incubator: ["header", "content", "content", "visual", "content", "next"],
+    soft_landing: ["header", "content", "visual", "content", "data", "next"],
+    sandbox: ["header", "content", "content", "data", "content", "next"],
+    innovation_challenge: ["header", "visual", "content", "data", "content", "next"],
+    corporate_innovation: ["header", "content", "visual", "content", "data", "next"],
+    ai_training: ["header", "content", "content", "visual", "next"],
+    government_capability: ["sentence", "header", "visual", "content", "data", "content", "next"],
+    executive_workshop: ["header", "content", "content", "next"],
+    venture_building: ["header", "content", "visual", "content", "next"],
+  };
+  var rhythm = rhythmMap[archetype] || rhythmMap.accelerator;
+  var lastSourceDeck = null;
+  var consecutiveFromSame = 0;
+
+  plan.forEach(function(sec, idx) {
+    // Adjacent-slide source consistency
+    if (sec.candidate && sec.candidate.sourceDeck) {
+      if (sec.candidate.sourceDeck === lastSourceDeck) {
+        consecutiveFromSame++;
+        if (consecutiveFromSame >= 2) sec.preserveStyle = true;
+      } else {
+        consecutiveFromSame = 0;
+      }
+      lastSourceDeck = sec.candidate.sourceDeck;
+    } else {
+      consecutiveFromSame = 0;
+      lastSourceDeck = null;
+    }
+
+    // Rhythm intensity
+    var rhythmIdx = idx % rhythm.length;
+    sec.expectedIntensity = rhythm[rhythmIdx];
+    sec.isHighIntensity = (rhythm[rhythmIdx] === "visual" || rhythm[rhythmIdx] === "data");
+  });
+
+  return plan;
+}
+
+// ── Slide Lineage Tracking ────────────────────────────────
+
+function createLineageRecord(section, presId, inputs) {
+  return {
+    timestamp: new Date().toISOString(),
+    generationMode: section.source,
+    archetype: inputs.archetype || "",
+    prospectCompany: inputs.prospectCompany || "",
+    sectionType: section.type || "",
+    sectionLabel: section.label || "",
+    sourceSlideId: section.dna ? section.dna.slideId : null,
+    sourceDeckId: section.dna ? section.dna.sourcePresentationId : null,
+    sourceDeckName: section.dna ? section.dna.sourceDeck : null,
+    combinedScore: section.score || 0,
+    textScore: section.textScore || 0,
+    visualScore: section.visualScore || 0,
+    finalPresentationId: presId || null,
+  };
+}
+
+function saveLineage(token, lineageRecords, logs) {
+  var folderQ = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='06 Indexes' and trashed=false");
+  return fetch("https://www.googleapis.com/drive/v3/files?q=" + folderQ + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives", {
+    headers: { Authorization: "Bearer " + token }
+  }).then(function(r) { return r.json(); }).then(function(search) {
+    var folderId = search.files && search.files[0] ? search.files[0].id : null;
+    if (!folderId) return;
+    var q = encodeURIComponent("mimeType='application/json' and '" + folderId + "' in parents and name='slide_lineage.json' and trashed=false");
+    return fetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true", {
+      headers: { Authorization: "Bearer " + token }
+    }).then(function(r) { return r.json(); }).then(function(search2) {
+      var existing = search2.files && search2.files[0] ? search2.files[0].id : null;
+      var body = JSON.stringify({ records: lineageRecords, updatedAt: new Date().toISOString() });
+      if (existing) {
+        return fetch("https://www.googleapis.com/upload/drive/v3/files/" + existing + "?uploadType=media&supportsAllDrives=true", {
+          method: "PATCH", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: body,
+        }).then(function() { logs.push("Saved " + lineageRecords.length + " lineage records"); });
+      } else {
+        var metadata = { name: "slide_lineage.json", mimeType: "application/json", parents: [folderId] };
+        var form = new FormData();
+        form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+        form.append("file", new Blob([body], { type: "application/json" }));
+        return fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true", {
+          method: "POST", headers: { Authorization: "Bearer " + token }, body: form,
+        }).then(function() { logs.push("Created lineage file with " + lineageRecords.length + " records"); });
+      }
+    });
+  }).catch(function(err) { logs.push("Lineage save error: " + err.message); });
+}
+
 function adaptRetrievedContent(originalText, prospectCompany, offerings, geography) {
   if (!originalText) return "";
   var adapted = originalText;
@@ -634,6 +727,15 @@ export default function handler(req, res) {
       plan = arch.sectionOrder.map(function(st) { return { type: st, label: st.replace(/_/g, " "), source: "generated", score: 0, candidate: null, dna: null }; });
     }
 
+    // Apply deck coherence — rhythm, pacing, adjacent-slide consistency
+    plan = applyCoherence(plan, archetypeKey);
+    var coherenceBoosts = plan.filter(function(s) { return s.preserveStyle; }).length;
+    if (coherenceBoosts > 0) logs.push("Coherence: " + coherenceBoosts + " slides marked for style preservation");
+
+    // Lineage tracking
+    var lineageRecords = [];
+    var inputs = { archetype: archetypeKey, prospectCompany: prospectCompany, offerings: offerings, geography: geo };
+
     // Create presentation
     return gapi(accessToken, "https://slides.googleapis.com/v1/presentations", {
       method: "POST",
@@ -660,7 +762,8 @@ export default function handler(req, res) {
           // ── TEMPLATE CLONING: physically copy the historical slide ──
           var cloneReq = buildCloneSlideRequest(sid, sec.dna.sourcePresentationId, sec.dna.slideId);
           allReqs.push(cloneReq);
-          sectionMap.push({ type: sec.type, label: sec.label, source: "cloned", score: sec.score, textScore: sec.textScore || 0, visualScore: sec.visualScore || 0, slideIndex: slideIdx });
+          sectionMap.push({ type: sec.type, label: sec.label, source: "cloned", score: sec.score, textScore: sec.textScore || 0, visualScore: sec.visualScore || 0, slideIndex: slideIdx, preserveStyle: sec.preserveStyle || false });
+          lineageRecords.push(createLineageRecord(sec, presId, inputs));
           logs.push("  [C] " + sec.type + " (score: " + sec.score + ", visual: " + (sec.visualScore || 0) + ") from " + sec.dna.sourceDeck);
           return;
 
@@ -688,11 +791,13 @@ export default function handler(req, res) {
           var builderArgs = [sid].concat(result.args || []);
           var reqs = result.builder.apply(null, builderArgs);
           allReqs = allReqs.concat(reqs);
-          sectionMap.push({ type: sec.type, label: sec.label, source: sec.source, score: sec.score, textScore: sec.textScore || 0, visualScore: sec.visualScore || 0, slideIndex: slideIdx });
+          sectionMap.push({ type: sec.type, label: sec.label, source: sec.source, score: sec.score, textScore: sec.textScore || 0, visualScore: sec.visualScore || 0, slideIndex: slideIdx, preserveStyle: sec.preserveStyle || false });
+          lineageRecords.push(createLineageRecord(sec, presId, inputs));
         }
       });
 
       logs.push("Total requests: " + allReqs.length);
+      logs.push("Lineage: " + lineageRecords.length + " records tracked");
 
       // Apply batchUpdate
       return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
@@ -704,6 +809,11 @@ export default function handler(req, res) {
           throw new Error(batch.data.error ? batch.data.error.message : "Batch failed");
         }
         logs.push("Batch applied: " + allReqs.length + " requests");
+
+        // Save lineage (fire and forget — don't block response)
+        if (lineageRecords.length > 0) {
+          saveLineage(accessToken, lineageRecords, logs).catch(function(){});
+        }
 
         // Folder move
         var folderPath = "";
@@ -734,7 +844,7 @@ export default function handler(req, res) {
               });
           })
           .then(function(fp) {
-            return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap };
+            return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length };
           });
       });
     });
