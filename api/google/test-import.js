@@ -161,9 +161,10 @@ function openAndCount(token, presId, fileName, mimeType, logs, stages, logStage,
 
   return gapi(token,
     "https://slides.googleapis.com/v1/presentations/" + presId
-    + "?fields=presentationId,title,slides(objectId,slideProperties(layout(predefinedLayout)))"
   ).then(function(pres) {
-    logStage("OPEN", pres.ok ? "OK" : "FAIL", "status=" + pres.status + " slides=" + ((pres.data.slides || []).length));
+    var slideCount = (pres.data.slides || []).length;
+    var presTitle = pres.data.title || "(no title)";
+    logStage("OPEN", pres.ok ? "OK" : "FAIL", "status=" + pres.status + " title='" + presTitle + "' slides=" + slideCount + " bodySize=" + pres.body.length + "b");
 
     if (!pres.ok) {
       return res.end(JSON.stringify({

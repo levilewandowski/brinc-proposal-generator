@@ -375,9 +375,10 @@ function findOldestFolder(token, rootId, folderName, logs) {
 // ── Read & Extract Slides from a Presentation ─────────────
 
 function readAndExtractSlides(token, presId, file, logs) {
+  logs.push("  SLIDES_API: GET /v1/presentations/" + presId.substring(0, 12) + "... (full payload, no fields filter)");
+
   return gapi(token,
     "https://slides.googleapis.com/v1/presentations/" + presId
-    + "?fields=presentationId,title,slides(objectId,slideProperties(layout(objectId,predefinedLayout)),pageElements(objectId,transform(translateX,translateY,scaleX,scaleY,rotate),size(width(height,magnitude),height(height,magnitude)),shape(objectId,shapeType,shapeProperties(shapeBackgroundFill(solidFill(color(rgbColor)))),text(textElements(content,textRun(content,style(bold,fontSize,foregroundColor(opaqueColor(rgbColor))))))),image(contentUrl)))"
   ).then(function(pres) {
     if (!pres.ok) {
       logs.push("  Slides API FAILED: status=" + pres.status + " body=" + pres.body);
@@ -385,7 +386,16 @@ function readAndExtractSlides(token, presId, file, logs) {
     }
 
     var slides = pres.data.slides || [];
-    logs.push("  " + file.name + ": " + slides.length + " slides");
+    var presTitle = pres.data.title || "(no title)";
+    var slideCount = slides.length;
+    logs.push("  SLIDES_API: status=" + pres.status + " title='" + presTitle + "' slides=" + slideCount);
+    logs.push("  SLIDES_API: bodySize=" + pres.body.length + " bytes");
+
+    if (slideCount > 0) {
+      var firstSlide = slides[0];
+      var firstElements = (firstSlide.pageElements || []).length;
+      logs.push("  SLIDES_API: slide[0] id=" + firstSlide.objectId + " elements=" + firstElements);
+    }
 
     var slideTexts = []; var slideTypes = []; var slideLayouts = [];
     var sectionFlow = []; var slideDetails = []; var slideDNARecords = [];
