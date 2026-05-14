@@ -343,8 +343,8 @@ function listFolderChildren(token, folderId, logs) {
 
 function countPptxFiles(token, folderId, logs) {
   var url = "https://www.googleapis.com/drive/v3/files?q="
-    + encodeURIComponent("mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' and '" + folderId + "' in parents and trashed=false")
-    + "&fields=files(id,name)"
+    + encodeURIComponent("'" + folderId + "' in parents and trashed=false")
+    + "&fields=files(id,name,mimeType,fileExtension,shortcutDetails(targetMimeType))"
     + "&pageSize=100"
     + "&supportsAllDrives=true"
     + "&includeItemsFromAllDrives=true";
@@ -353,15 +353,23 @@ function countPptxFiles(token, folderId, logs) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.error) {
-        logs.push("WORKSPACE: PPTX count error code=" + (data.error.code || "?") + ": " + (data.error.message || "?"));
+        logs.push("WORKSPACE: File count error code=" + (data.error.code || "?") + ": " + (data.error.message || "?"));
         return 0;
       }
-      var count = (data.files || []).length;
-      logs.push("WORKSPACE: PPTX count for " + folderId.substring(0, 12) + "... = " + count);
+      var count = (data.files || []).filter(function(f) {
+        var isPptx = f.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        var isSlides = f.mimeType === "application/vnd.google-apps.presentation";
+        var isShortcut = f.mimeType === "application/vnd.google-apps.shortcut" && f.shortcutDetails &&
+          (f.shortcutDetails.targetMimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+           f.shortcutDetails.targetMimeType === "application/vnd.google-apps.presentation");
+        var byName = f.name && f.name.toLowerCase().endsWith(".pptx");
+        return isPptx || isSlides || isShortcut || byName;
+      }).length;
+      logs.push("WORKSPACE: Presentation count for " + folderId.substring(0, 12) + "... = " + count);
       return count;
     })
     .catch(function(err) {
-      logs.push("WORKSPACE: PPTX count exception: " + (err.message || String(err)));
+      logs.push("WORKSPACE: File count exception: " + (err.message || String(err)));
       return 0;
     });
 }

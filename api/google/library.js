@@ -127,29 +127,22 @@ export default function handler(req, res) {
         }));
       }
 
-      // ── PHASE 2: Find PPTX files ──
-      var lists = [];
-      if (sourceId) {
-        var sq = encodeURIComponent("mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' and '" + sourceId + "' in parents and trashed=false");
-        lists.push(
-          gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + sq + "&fields=files(id,name,modifiedTime)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true")
-            .then(function(r) {
-              logs.push("02 Source Decks API: status=" + r.status + " files=" + (r.data.files || []).length);
-              return { folder: "02 Source Decks", folderId: sourceId, files: r.data.files || [] };
-            })
-        );
-      }
-      if (tmplId) {
-        var tq = encodeURIComponent("mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' and '" + tmplId + "' in parents and trashed=false");
-        lists.push(
-          gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + tq + "&fields=files(id,name,modifiedTime)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true")
-            .then(function(r) {
-              logs.push("03 Templates API: status=" + r.status + " files=" + (r.data.files || []).length);
-              return { folder: "03 Templates", folderId: tmplId, files: r.data.files || [] };
-            })
-        );
-      }
-      return Promise.all(lists).then(function(folderResults) {
+      // ── PHASE 2: Discover ALL files (broad query, then classify) ──
+      var discoveryPromises = [];
+      if (sourceId) discoveryPromises.push(discoverFilesInFolder(token, sourceId, "02 Source Decks", logs));
+      if (tmplId) discoveryPromises.push(discoverFilesInFolder(token, tmplId, "03 Templates", logs));
+
+      return Promise.all(discoveryPromises).then(function(discoveryResults) {
+        var allFiles = [];
+        var folderResults = [];
+        discoveryResults.forEach(function(discovered) {
+          // Collect all presentation-class files
+          var pptxFiles = discovered.items.filter(function(f) { return f.isPresentation; });
+          var subfolderFiles = discovered.subfolderFiles || [];
+          var combined = pptxFiles.concat(subfolderFiles);
+          logs.push(discovered.folder + ": " + combined.length + " presentation file(s) (" + pptxFiles.length + " direct + " + subfolderFiles.length + " from subfolders)");
+          folderResults.push({ folder: discovered.folder, folderId: discovered.folderId, files: combined.map(function(f) { return { id: f.id, name: f.name, modifiedTime: f.modifiedTime }; }) });
+        });
         return { folderResults: folderResults, folderNames: folderNames, allChildrenCount: allChildren.length };
       });
     }).then(function(ctx) {
@@ -338,6 +331,180 @@ function findOldestFolder(token, rootId, folderName, logs) {
     });
 }
 
+// ── File Discovery (broad query + classification) ─────────
+
+function discoverFilesInFolder(token, folderId, folderName, logs) {
+  logs.push("DISCOVER: Scanning '" + folderName + "' (" + folderId.substring(0, 12) + "...)");
+
+  var allItems = [];
+  var subfolders = [];
+  var subfolderFiles = [];
+
+  // Step 1: Broad query — NO mimeType filter
+  var broadQ = encodeURIComponent("'" + folderId + "' in parents and trashed=false");
+  var broadUrl = "https://www.googleapis.com/drive/v3/files?q=" + broadQ
+    + "&fields=nextPageToken,files(id,name,mimeType,parents,fileExtension,shortcutDetails(targetId,targetMimeType),createdTime,modifiedTime,webViewLink)"
+    + "&pageSize=100"
+    + "&supportsAllDrives=true"
+    + "&includeItemsFromAllDrives=true";
+
+  return gapi(token, broadUrl).then(function(result) {
+    if (!result.ok) {
+      logs.push("DISCOVER: Broad query ERROR status=" + result.status + " body=" + result.body);
+      return { folder: folderName, folderId: folderId, items: [], subfolderFiles: [] };
+    }
+
+    var files = result.data.files || [];
+    logs.push("DISCOVER: Broad query returned " + files.length + " item(s) in '" + folderName + "'");
+
+    files.forEach(function(f) {
+      logs.push("DISCOVER:   name='" + f.name + "' mimeType=" + f.mimeType
+        + (f.fileExtension ? " ext=" + f.fileExtension : "")
+        + (f.shortcutDetails ? " SHORTCUT→" + f.shortcutDetails.targetMimeType : ""));
+
+      var isPresentation = false;
+      var isSubfolder = false;
+      var effectiveId = f.id;
+      var effectiveMimeType = f.mimeType;
+
+      // Classify
+      if (f.mimeType === "application/vnd.google-apps.folder") {
+        isSubfolder = true;
+      } else if (f.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation") {
+        isPresentation = true; // .pptx upload
+      } else if (f.mimeType === "application/vnd.google-apps.presentation") {
+        isPresentation = true; // Google Slides
+      } else if (f.mimeType === "application/vnd.google-apps.shortcut" && f.shortcutDetails) {
+        // Shortcut — resolve target mimeType
+        var targetMime = f.shortcutDetails.targetMimeType || "";
+        if (targetMime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+            targetMime === "application/vnd.google-apps.presentation") {
+          isPresentation = true;
+          effectiveId = f.shortcutDetails.targetId || f.id;
+          effectiveMimeType = targetMime;
+          logs.push("DISCOVER:     → resolved shortcut to presentation");
+        }
+      }
+
+      // Also match by name extension
+      if (!isPresentation && !isSubfolder && f.name && f.name.toLowerCase().endsWith(".pptx")) {
+        isPresentation = true;
+        logs.push("DISCOVER:     → matched by .pptx extension");
+      }
+
+      var item = {
+        id: effectiveId,
+        name: f.name,
+        mimeType: effectiveMimeType,
+        originalMimeType: f.mimeType,
+        fileExtension: f.fileExtension,
+        isPresentation: isPresentation,
+        isSubfolder: isSubfolder,
+        modifiedTime: f.modifiedTime,
+        webViewLink: f.webViewLink,
+      };
+
+      allItems.push(item);
+      if (isSubfolder) subfolders.push({ id: f.id, name: f.name });
+    });
+
+    // Step 2: Recursively scan subfolders
+    if (subfolders.length > 0) {
+      logs.push("DISCOVER: Recursing into " + subfolders.length + " subfolder(s)");
+      var subPromises = subfolders.map(function(sf) {
+        return discoverFilesInFolder(token, sf.id, folderName + "/" + sf.name, logs).then(function(sub) {
+          return sub.items.filter(function(f) { return f.isPresentation; });
+        });
+      });
+      return Promise.all(subPromises).then(function(subResults) {
+        subResults.forEach(function(files) {
+          subfolderFiles = subfolderFiles.concat(files);
+        });
+        logs.push("DISCOVER: Subfolders added " + subfolderFiles.length + " presentation file(s)");
+        return { folder: folderName, folderId: folderId, items: allItems, subfolderFiles: subfolderFiles };
+      });
+    }
+
+    return { folder: folderName, folderId: folderId, items: allItems, subfolderFiles: [] };
+  });
+}
+
+// ── Read & Extract Slides from a Presentation ─────────────
+
+function readAndExtractSlides(token, presId, file, logs) {
+  return gapi(token,
+    "https://slides.googleapis.com/v1/presentations/" + presId
+    + "?fields=presentationId,title,slides(objectId,slideProperties(layout(objectId,predefinedLayout)),pageElements(objectId,transform(translateX,translateY,scaleX,scaleY,rotate),size(width(height,magnitude),height(height,magnitude)),shape(objectId,shapeType,shapeProperties(shapeBackgroundFill(solidFill(color(rgbColor)))),text(textElements(content,textRun(content,style(bold,fontSize,foregroundColor(opaqueColor(rgbColor))))))),image(contentUrl)))"
+  ).then(function(pres) {
+    if (!pres.ok) {
+      logs.push("  Slides API FAILED: status=" + pres.status + " body=" + pres.body);
+      return null;
+    }
+
+    var slides = pres.data.slides || [];
+    logs.push("  " + file.name + ": " + slides.length + " slides");
+
+    var slideTexts = []; var slideTypes = []; var slideLayouts = [];
+    var sectionFlow = []; var slideDetails = []; var slideDNARecords = [];
+
+    slides.forEach(function(slide) {
+      var texts = []; var boldTexts = []; var shapeCount = 0;
+      (slide.pageElements || []).forEach(function(el) {
+        if (el.shape) {
+          shapeCount++;
+          if (el.shape.text && el.shape.text.textElements) {
+            el.shape.text.textElements.forEach(function(te) {
+              var txt = (te.textRun && te.textRun.content || "").trim();
+              if (txt) {
+                texts.push(txt);
+                if (te.textRun && te.textRun.style && te.textRun.style.bold) boldTexts.push(txt);
+              }
+            });
+          }
+        }
+      });
+      var combinedText = texts.join(" ");
+      slideTexts.push(combinedText);
+      var classification = classifySlide(texts);
+      slideTypes.push(classification.type);
+      sectionFlow.push(classification.type);
+
+      var layout = "text_only";
+      if (shapeCount > 4) layout = "complex";
+      else if (boldTexts.length > 0 && texts.length > 2) layout = "heading_body_bullets";
+      else if (boldTexts.length > 0 && texts.length === 2) layout = "heading_body";
+      else if (boldTexts.length > 0) layout = "title_only";
+      slideLayouts.push(layout);
+
+      slideDetails.push({
+        slideId: slide.objectId, slideType: classification.type,
+        sectionTag: classification.type, text: combinedText,
+        layout: layout, confidence: classification.confidence || 0.5,
+      });
+    });
+
+    var deckClassification = classifyDeck(slideTexts, file.name);
+    var archetypeKey = deckClassification.archetype;
+
+    slides.forEach(function(slide, i) {
+      var dna = extractSlideDNA(slide, slideTypes[i], archetypeKey, file.name, file.modifiedTime, presId);
+      if (dna) slideDNARecords.push(dna);
+    });
+
+    var profile = {
+      fileName: file.name, folder: file.folder, presentationId: presId,
+      modifiedTime: file.modifiedTime, slideCount: slides.length,
+      archetype: archetypeKey,
+      archetypeLabel: DECK_ARCHETYPES[archetypeKey] ? DECK_ARCHETYPES[archetypeKey].label : archetypeKey,
+      archetypeConfidence: deckClassification.confidence,
+      sectionFlow: sectionFlow, slides: slideDetails, slideDNA: slideDNARecords,
+    };
+
+    logs.push("  Profile: " + file.name + " | archetype=" + archetypeKey + " | slides=" + slides.length + " | DNA=" + slideDNARecords.length);
+    return profile;
+  });
+}
+
 // ── Deep File Scan ────────────────────────────────────────
 
 function deepScanFiles(token, files, templateLibId, logs) {
@@ -366,8 +533,20 @@ function deepScanFiles(token, files, templateLibId, logs) {
     }
 
     var file = files[index];
-    logs.push("SCAN: Copying " + file.name);
+    var isNativeSlides = file.mimeType === "application/vnd.google-apps.presentation";
 
+    // For native Google Slides, read directly. For .pptx, copy to Google Slides first.
+    if (isNativeSlides) {
+      logs.push("SCAN: Reading native Google Slides: " + file.name + " (" + file.id.substring(0, 12) + "...)");
+      return scanPresentation(token, file.id, file, templateLibId, logs).then(function() {
+        return scanFile(index + 1);
+      }).catch(function(err) {
+        logs.push("  Error reading " + file.name + ": " + (err.message || String(err)));
+        return scanFile(index + 1);
+      });
+    }
+
+    logs.push("SCAN: Copying .pptx to Google Slides: " + file.name);
     return gapi(token, "https://www.googleapis.com/drive/v3/files/" + file.id + "/copy", {
       method: "POST",
       body: JSON.stringify({ name: file.name, mimeType: "application/vnd.google-apps.presentation" }),
@@ -387,86 +566,16 @@ function deepScanFiles(token, files, templateLibId, logs) {
       }
 
       return movePromise.then(function() {
-        return gapi(token,
-          "https://slides.googleapis.com/v1/presentations/" + presId
-          + "?fields=presentationId,title,slides(objectId,slideProperties(layout(objectId,predefinedLayout)),pageElements(objectId,transform(translateX,translateY,scaleX,scaleY,rotate),size(width(height,magnitude),height(height,magnitude)),shape(objectId,shapeType,shapeProperties(shapeBackgroundFill(solidFill(color(rgbColor)))),text(textElements(content,textRun(content,style(bold,fontSize,foregroundColor(opaqueColor(rgbColor))))))),image(contentUrl)))"
-        ).then(function(pres) {
-          if (!pres.ok) {
-            logs.push("  Slides API FAILED: status=" + pres.status);
-            return scanFile(index + 1);
-          }
-
-          var slides = pres.data.slides || [];
-          logs.push("  " + file.name + ": " + slides.length + " slides");
-
-          var slideTexts = []; var slideTypes = []; var slideLayouts = [];
-          var sectionFlow = []; var slideDetails = []; var slideDNARecords = [];
-
-          slides.forEach(function(slide) {
-            var texts = []; var boldTexts = []; var shapeCount = 0;
-            (slide.pageElements || []).forEach(function(el) {
-              if (el.shape) {
-                shapeCount++;
-                if (el.shape.text && el.shape.text.textElements) {
-                  el.shape.text.textElements.forEach(function(te) {
-                    var txt = (te.textRun && te.textRun.content || "").trim();
-                    if (txt) { texts.push(txt); if (te.textRun && te.textRun.style && te.textRun.style.bold) boldTexts.push(txt); }
-                  });
-                }
-              }
-            });
-            var combinedText = texts.join(" ");
-            slideTexts.push(combinedText);
-            var classification = classifySlide(texts);
-            slideTypes.push(classification.type);
-            allSlideTypes.push(classification.type);
-            sectionFlow.push(classification.type);
-
-            var layout = "text_only";
-            if (shapeCount > 4) layout = "complex";
-            else if (boldTexts.length > 0 && texts.length > 2) layout = "heading_body_bullets";
-            else if (boldTexts.length > 0 && texts.length === 2) layout = "heading_body";
-            else if (boldTexts.length > 0) layout = "title_only";
-            slideLayouts.push(layout);
-            allSlideLayouts.push(layout);
-
-            var stKey = classification.type;
-            if (!contentSamples[stKey]) contentSamples[stKey] = [];
-            if (texts.length > 0) {
-              var sample = texts.slice(0, 3).join(" | ").substring(0, 150);
-              if (sample.length > 10) contentSamples[stKey].push(sample);
-            }
-            slideDetails.push({
-              slideId: slide.objectId, slideType: classification.type,
-              sectionTag: classification.type, text: combinedText,
-              layout: layout, confidence: classification.confidence || 0.5,
-            });
-          });
-
-          var deckClassification = classifyDeck(slideTexts, file.name);
-          var archetypeKey = deckClassification.archetype;
-          archetypeCounts[archetypeKey] = (archetypeCounts[archetypeKey] || 0) + 1;
-
-          slides.forEach(function(slide, i) {
-            var dna = extractSlideDNA(slide, slideTypes[i], archetypeKey, file.name, file.modifiedTime, presId);
-            if (dna) slideDNARecords.push(dna);
-          });
-
-          deckProfiles.push({
-            fileName: file.name, folder: file.folder, presentationId: presId,
-            modifiedTime: file.modifiedTime, slideCount: slides.length,
-            archetype: archetypeKey,
-            archetypeLabel: DECK_ARCHETYPES[archetypeKey] ? DECK_ARCHETYPES[archetypeKey].label : archetypeKey,
-            archetypeConfidence: deckClassification.confidence,
-            sectionFlow: sectionFlow, slides: slideDetails, slideDNA: slideDNARecords,
-          });
-          allSlideTexts = allSlideTexts.concat(slideTexts);
-          logs.push("  Profile: " + file.name + " | archetype=" + archetypeKey + " | slides=" + slides.length);
-          return scanFile(index + 1);
-        }).catch(function(err) {
-          logs.push("  Error scanning " + file.name + ": " + (err.message || String(err)));
-          return scanFile(index + 1);
-        });
+        return readAndExtractSlides(token, presId, file, logs);
+      }).then(function(profile) {
+        if (profile) {
+          deckProfiles.push(profile);
+          profile.slides.forEach(function(s) { allSlideTypes.push(s.slideType); allSlideLayouts.push(s.layout); allSlideTexts.push(s.text); });
+        }
+        return scanFile(index + 1);
+      }).catch(function(err) {
+        logs.push("  Error scanning " + file.name + ": " + (err.message || String(err)));
+        return scanFile(index + 1);
       });
     }).catch(function(err) {
       logs.push("  Error copying " + file.name + ": " + (err.message || String(err)));
