@@ -209,7 +209,6 @@ export default function handler(req, res) {
     }
 
     // Build batchUpdate requests
-    var reqs = [];
     var now = Date.now();
     var slideIdx = 0;
 
@@ -222,108 +221,96 @@ export default function handler(req, res) {
       accent: { red: 0.2, green: 0.4, blue: 0.7 },
     };
 
-    function addSlide(section) {
+    function buildSlideRequests(section) {
       var sid = "s" + now + "_" + slideIdx;
       slideIdx++;
+      var r = [];
 
       if (section.type === "cover") {
+        // Create slide FIRST (must be first request for this slide)
+        r.push({ createSlide: { objectId: sid, slideLayoutReference: { predefinedLayout: "BLANK" } } });
+
         // Full-bleed cover with navy background shape
         var bgId = "bg" + sid;
-        reqs.push({ createShape: {
+        r.push({ createShape: {
           objectId: bgId, shapeType: "RECTANGLE",
           elementProperties: { pageObjectId: sid, size: { width: { magnitude: 720, unit: "PT" }, height: { magnitude: 540, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: "PT" } } }
         });
-        reqs.push({ updateShapeProperties: { objectId: bgId, shapeProperties: { shapeBackgroundColor: { opaqueColor: { rgbColor: COLORS.navy } } }, fields: "shapeBackgroundColor" } });
+        r.push({ updateShapeProperties: { objectId: bgId, shapeProperties: { shapeBackgroundFill: { solidFill: { color: { rgbColor: COLORS.navy } } } }, fields: "shapeBackgroundFill.solidFill.color" } });
 
         // Title
         var tid = "t" + sid;
-        reqs.push({ createShape: {
+        r.push({ createShape: {
           objectId: tid, shapeType: "TEXT_BOX",
           elementProperties: { pageObjectId: sid, size: { width: { magnitude: 600, unit: "PT" }, height: { magnitude: 80, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 60, translateY: 180, unit: "PT" } } }
         });
-        reqs.push({ insertText: { objectId: tid, text: section.title } });
-        reqs.push({ updateTextStyle: { objectId: tid, style: { bold: true, fontSize: { magnitude: 44, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.white } } }, fields: "bold,fontSize,foregroundColor" } });
+        r.push({ insertText: { objectId: tid, text: section.title } });
+        r.push({ updateTextStyle: { objectId: tid, style: { bold: true, fontSize: { magnitude: 44, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.white } } }, fields: "bold,fontSize,foregroundColor" } });
 
         // Subtitle
         if (section.subtitle) {
           var sid2 = "st" + sid;
-          reqs.push({ createShape: {
+          r.push({ createShape: {
             objectId: sid2, shapeType: "TEXT_BOX",
             elementProperties: { pageObjectId: sid, size: { width: { magnitude: 400, unit: "PT" }, height: { magnitude: 40, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 60, translateY: 270, unit: "PT" } } }
           });
-          reqs.push({ insertText: { objectId: sid2, text: section.subtitle } });
-          reqs.push({ updateTextStyle: { objectId: sid2, style: { fontSize: { magnitude: 24, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.lightGray } } }, fields: "fontSize,foregroundColor" } });
+          r.push({ insertText: { objectId: sid2, text: section.subtitle } });
+          r.push({ updateTextStyle: { objectId: sid2, style: { fontSize: { magnitude: 24, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.lightGray } } }, fields: "fontSize,foregroundColor" } });
         }
 
         // Context lines below subtitle
         if (section.body && section.body.length > 0) {
           var cid = "c" + sid;
-          reqs.push({ createShape: {
+          r.push({ createShape: {
             objectId: cid, shapeType: "TEXT_BOX",
             elementProperties: { pageObjectId: sid, size: { width: { magnitude: 600, unit: "PT" }, height: { magnitude: 60, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 60, translateY: 330, unit: "PT" } } }
           });
-          reqs.push({ insertText: { objectId: cid, text: section.body.join("\n") } });
-          reqs.push({ updateTextStyle: { objectId: cid, style: { fontSize: { magnitude: 12, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.lightGray } } }, fields: "fontSize,foregroundColor" } });
+          r.push({ insertText: { objectId: cid, text: section.body.join("\n") } });
+          r.push({ updateTextStyle: { objectId: cid, style: { fontSize: { magnitude: 12, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.lightGray } } }, fields: "fontSize,foregroundColor" } });
         }
-
-        // Create slide first (must be first request for this slide)
-        reqs.unshift({ createSlide: { objectId: sid, slideLayoutReference: { predefinedLayout: "BLANK" } } });
       }
       else if (section.type === "content") {
         // Standard content slide with heading + body
-        reqs.push({ createSlide: { objectId: sid, slideLayoutReference: { predefinedLayout: "BLANK" } } });
+        r.push({ createSlide: { objectId: sid, slideLayoutReference: { predefinedLayout: "BLANK" } } });
 
         // Section title
         var htid = "ht" + sid;
-        reqs.push({ createShape: {
+        r.push({ createShape: {
           objectId: htid, shapeType: "TEXT_BOX",
           elementProperties: { pageObjectId: sid, size: { width: { magnitude: 620, unit: "PT" }, height: { magnitude: 50, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 40, translateY: 40, unit: "PT" } } }
         });
-        reqs.push({ insertText: { objectId: htid, text: section.title } });
-        reqs.push({ updateTextStyle: { objectId: htid, style: { bold: true, fontSize: { magnitude: 28, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.navy } } }, fields: "bold,fontSize,foregroundColor" } });
+        r.push({ insertText: { objectId: htid, text: section.title } });
+        r.push({ updateTextStyle: { objectId: htid, style: { bold: true, fontSize: { magnitude: 28, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.navy } } }, fields: "bold,fontSize,foregroundColor" } });
 
         // Accent bar under title
         var barId = "bar" + sid;
-        reqs.push({ createShape: {
+        r.push({ createShape: {
           objectId: barId, shapeType: "RECTANGLE",
           elementProperties: { pageObjectId: sid, size: { width: { magnitude: 80, unit: "PT" }, height: { magnitude: 4, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 40, translateY: 90, unit: "PT" } } }
         });
-        reqs.push({ updateShapeProperties: { objectId: barId, shapeProperties: { shapeBackgroundColor: { opaqueColor: { rgbColor: COLORS.accent } } }, fields: "shapeBackgroundColor" } });
+        r.push({ updateShapeProperties: { objectId: barId, shapeProperties: { shapeBackgroundFill: { solidFill: { color: { rgbColor: COLORS.accent } } } }, fields: "shapeBackgroundFill.solidFill.color" } });
 
         // Body text
         if (section.body.length > 0) {
           var bid = "b" + sid;
           var bodyText = section.body.join("\n");
           var bodyHeight = Math.min(300, Math.max(100, bodyText.split("\n").length * 24));
-          reqs.push({ createShape: {
+          r.push({ createShape: {
             objectId: bid, shapeType: "TEXT_BOX",
             elementProperties: { pageObjectId: sid, size: { width: { magnitude: 620, unit: "PT" }, height: { magnitude: bodyHeight, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 40, translateY: 110, unit: "PT" } } }
           });
-          reqs.push({ insertText: { objectId: bid, text: bodyText } });
-          reqs.push({ updateTextStyle: { objectId: bid, style: { fontSize: { magnitude: 14, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.gray } } }, fields: "fontSize,foregroundColor" } });
+          r.push({ insertText: { objectId: bid, text: bodyText } });
+          r.push({ updateTextStyle: { objectId: bid, style: { fontSize: { magnitude: 14, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.gray } } }, fields: "fontSize,foregroundColor" } });
         }
       }
+      return r;
     }
 
-    // Build all requests in order (createSlide must come first for each slide)
+    // Build all requests in correct order
     var orderedReqs = [];
     for (var i = 0; i < sections.length; i++) {
-      var sectionReqs = [];
-      // Capture reqs added by addSlide
-      var beforeLen = reqs.length;
-      addSlide(sections[i]);
-      var afterLen = reqs.length;
-      // Get the new reqs
-      for (var j = beforeLen; j < afterLen; j++) {
-        sectionReqs.push(reqs[j]);
-      }
-      // Remove from main reqs (we'll reorder)
-      reqs.splice(beforeLen, afterLen - beforeLen);
-      orderedReqs = orderedReqs.concat(sectionReqs);
+      orderedReqs = orderedReqs.concat(buildSlideRequests(sections[i]));
     }
-
-    // Add any remaining reqs
-    orderedReqs = orderedReqs.concat(reqs);
 
     logs.push("Sections: " + sections.length + ", requests: " + orderedReqs.length);
     logs.push("Section flow: " + sections.map(function(s) { return s.title; }).join(" > "));

@@ -4,12 +4,12 @@ function gapi(token, url, init) {
   return fetch(url, Object.assign({}, init, {
     headers: Object.assign({}, init && init.headers, { Authorization: "Bearer " + token, "Content-Type": "application/json" }),
   })).then(function(r) {
-    return r.text().then(function(t) { return { ok: r.ok, status: r.status, data: t ? JSON.parse(t) : {} }; });
+    return r.text().then(function(t) {
+      var d = {};
+      try { d = t ? JSON.parse(t) : {}; } catch(e) {}
+      return { ok: r.ok, status: r.status, data: d, body: t ? t.substring(0, 500) : "" };
+    });
   });
-}
-
-function findQ(name) {
-  return encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='" + name + "' and trashed=false");
 }
 
 function inferSectionOrder(orderCounts) {
@@ -35,7 +35,6 @@ function extractPatterns(token, files, logs) {
 
   function processFile(fileIndex) {
     if (fileIndex >= files.length) {
-      // Done - build patterns
       var inferredOrder = inferSectionOrder(sectionOrderCounts);
       var topPhrases = Object.entries(commonPhrases).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 15).map(function(e) { return { phrase: e[0], count: e[1] }; });
       return Promise.resolve({
@@ -53,7 +52,7 @@ function extractPatterns(token, files, logs) {
       body: JSON.stringify({ name: "[SCAN] " + file.name, mimeType: "application/vnd.google-apps.presentation" }),
     }).then(function(copied) {
       if (!copied.data.id) {
-        logs.push("Skip (copy failed): " + file.name);
+        logs.push("Skip (copy failed): " + file.name + " -> " + JSON.stringify(copied.data));
         return processFile(fileIndex + 1);
       }
       var tempId = copied.data.id;
@@ -136,7 +135,7 @@ function extractPatterns(token, files, logs) {
             sectionFlow: fileSections,
           });
 
-          logs.push("Scanned: " + file.name + " (" + slides.length + " slides, sections: " + fileSections.join(", ") + ")");
+          logs.push("Scanned: " + file.name + " (" + slides.length + " slides)");
 
           // Clean up temp
           fetch("https://www.googleapis.com/drive/v3/files/" + tempId, { method: "DELETE", headers: { Authorization: "Bearer " + token } }).catch(function(){});
@@ -167,39 +166,84 @@ export default function handler(req, res) {
   if (!token) return res.status(400).json({ error: "Missing accessToken" });
 
   var logs = [];
+  logs.push("DRIVE_ROOT: " + DRIVE_ROOT.substring(0, 10) + "...");
 
-  // Find folders
-  Promise.all([
-    gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + findQ("02 Source Decks") + "&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives"),
-    gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + findQ("03 Templates") + "&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives"),
-  ]).then(function(results) {
-    var source = results[0];
-    var tmpl = results[1];
-    var sourceId = (source.data.files || [])[0] && source.data.files[0].id;
-    var tmplId = (tmpl.data.files || [])[0] && tmpl.data.files[0].id;
+  // STEP 1: List ALL children of DRIVE_ROOT and find folders by name
+  var listUrl = "https://www.googleapis.com/drive/v3/files?q="
+    + encodeURIComponent("'" + DRIVE_ROOT + "' in parents and trashed=false")
+    + "&fields=files(id,name,mimeType)"
+    + "&pageSize=100"
+    + "&supportsAllDrives=true"
+    + "&includeItemsFromAllDrives=true"
+    + "&corpora=allDrives";
 
-    logs.push("02 Source Decks folder: " + (sourceId || "not found"));
-    logs.push("03 Templates folder: " + (tmplId || "not found"));
+  gapi(token, listUrl).then(function(listResult) {
+    var allChildren = listResult.data.files || [];
+    logs.push("DRIVE_ROOT children: " + allChildren.length + " item(s)");
 
+    // Filter to folders and match by name
+    var folders = {};
+    allChildren.forEach(function(f) {
+      if (f.mimeType === "application/vnd.google-apps.folder") {
+        logs.push("  Folder: '" + f.name + "' (id=" + f.id.substring(0, 10) + "...)");
+        folders[f.name] = f.id;
+      }
+    });
+
+    // Also try with normalized names
+    var sourceId = folders["02 Source Decks"] || folders["02 Source Decks "] || folders["02_Source_Decks"] || null;
+    var tmplId = folders["03 Templates"] || folders["03 Templates "] || folders["03_Templates"] || null;
+
+    logs.push("Matched 02 Source Decks: " + (sourceId || "NOT FOUND"));
+    logs.push("Matched 03 Templates: " + (tmplId || "NOT FOUND"));
+
+    if (!sourceId && !tmplId) {
+      // Return diagnostics so user can see what folders exist
+      return res.end(JSON.stringify({
+        ok: true,
+        msg: "No source/template folders found",
+        patterns: null,
+        fileList: [],
+        availableFolders: Object.keys(folders),
+        logs: logs,
+      }));
+    }
+
+    // STEP 2: List PPTX files inside found folders
     var lists = [];
     if (sourceId) {
       var sq = encodeURIComponent("mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' and '" + sourceId + "' in parents and trashed=false");
-      lists.push(gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + sq + "&fields=files(id,name,modifiedTime)&pageSize=10&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives").then(function(r) { return { folder: "02 Source Decks", files: r.data.files || [] }; }));
+      lists.push(
+        gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + sq + "&fields=files(id,name,modifiedTime)&pageSize=20&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives")
+          .then(function(r) { return { folder: "02 Source Decks", folderId: sourceId, files: r.data.files || [] }; })
+      );
     }
     if (tmplId) {
       var tq = encodeURIComponent("mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' and '" + tmplId + "' in parents and trashed=false");
-      lists.push(gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + tq + "&fields=files(id,name,modifiedTime)&pageSize=10&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives").then(function(r) { return { folder: "03 Templates", files: r.data.files || [] }; }));
+      lists.push(
+        gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + tq + "&fields=files(id,name,modifiedTime)&pageSize=20&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives")
+          .then(function(r) { return { folder: "03 Templates", folderId: tmplId, files: r.data.files || [] }; })
+      );
     }
-    return Promise.all(lists).then(function(folderFiles) { return { folderFiles: folderFiles, sourceId: sourceId, tmplId: tmplId }; });
-  }).then(function(ctx) {
+    return Promise.all(lists);
+  }).then(function(folderResults) {
+    // If folderResults is a Response (from early return above), skip
+    if (!Array.isArray(folderResults)) return;
+
     var allFiles = [];
-    ctx.folderFiles.forEach(function(r) {
+    folderResults.forEach(function(r) {
       logs.push(r.folder + ": " + r.files.length + " PPTX file(s)");
       r.files.forEach(function(f) { allFiles.push({ folder: r.folder, id: f.id, name: f.name }); });
     });
 
     if (allFiles.length === 0) {
-      return res.end(JSON.stringify({ ok: true, msg: "No PPTX files found", patterns: null, fileList: [], logs: logs }));
+      return res.end(JSON.stringify({
+        ok: true,
+        msg: "No PPTX files found in source/template folders",
+        patterns: null,
+        fileList: [],
+        logs: logs,
+      }));
     }
 
     var filesToScan = allFiles.slice(0, 5);
@@ -216,6 +260,7 @@ export default function handler(req, res) {
       }));
     });
   }).catch(function(err) {
+    logs.push("CRITICAL ERROR: " + (err.message || String(err)));
     res.status(500).end(JSON.stringify({ ok: false, error: err.message || String(err), logs: logs }));
   });
-};
+}
