@@ -141,7 +141,7 @@ function rectangle(id, pageId, x, y, w, h, color) {
       objectId: id,
       shapeProperties: { shapeBackgroundFill: { solidFill: { color: { rgbColor: color } } } },
       fields: "shapeBackgroundFill.solidFill.color"
-    } });
+    } } });
   return reqs;
 }
 
