@@ -6,7 +6,7 @@ import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
 import { toast, Toaster } from "sonner";
 import {
-  ArrowLeft, FileText, ExternalLink, Sparkles, User, Building2, Mail, Linkedin, Loader2, CheckCircle, Library, Bug, CopyCheck, AlertTriangle,
+  ArrowLeft, FileText, ExternalLink, Sparkles, User, Building2, Mail, Linkedin, Loader2, CheckCircle, Library, Bug, CopyCheck, AlertTriangle, Layers,
 } from "lucide-react";
 
 export default function ProposalView() {
