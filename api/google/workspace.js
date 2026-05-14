@@ -374,6 +374,117 @@ function countPptxFiles(token, folderId, logs) {
     });
 }
 
+// ── Shared HTTP Helper ────────────────────────────────────
+
+function gapi(token, url, init) {
+  return fetch(url, Object.assign({}, init, {
+    headers: Object.assign({}, init && init.headers, { Authorization: "Bearer " + token, "Content-Type": "application/json" }),
+  })).then(function(r) {
+    return r.text().then(function(t) {
+      var d = {};
+      try { d = t ? JSON.parse(t) : {}; } catch(e) {}
+      return { ok: r.ok, status: r.status, data: d, body: t ? t.substring(0, 2000) : "" };
+    });
+  });
+}
+
+// ── Shared File Discovery ─────────────────────────────────
+
+function discoverFilesInFolder(token, folderId, folderName, logs) {
+  logs.push("DISCOVER: Scanning '" + folderName + "' (" + folderId.substring(0, 12) + "...)");
+
+  var allItems = [];
+  var subfolders = [];
+  var subfolderFiles = [];
+
+  // Broad query — NO mimeType filter
+  var broadQ = encodeURIComponent("'" + folderId + "' in parents and trashed=false");
+  var broadUrl = "https://www.googleapis.com/drive/v3/files?q=" + broadQ
+    + "&fields=nextPageToken,files(id,name,mimeType,parents,fileExtension,shortcutDetails(targetId,targetMimeType),createdTime,modifiedTime,webViewLink)"
+    + "&pageSize=100"
+    + "&supportsAllDrives=true"
+    + "&includeItemsFromAllDrives=true";
+
+  return gapi(token, broadUrl).then(function(result) {
+    if (!result.ok) {
+      logs.push("DISCOVER: Broad query ERROR status=" + result.status + " body=" + result.body);
+      return { folder: folderName, folderId: folderId, items: [], subfolderFiles: [] };
+    }
+
+    var files = result.data.files || [];
+    logs.push("DISCOVER: Broad query returned " + files.length + " item(s) in '" + folderName + "'");
+
+    files.forEach(function(f) {
+      logs.push("DISCOVER:   name='" + f.name + "' mimeType=" + f.mimeType
+        + (f.fileExtension ? " ext=" + f.fileExtension : "")
+        + (f.shortcutDetails ? " SHORTCUT" : ""));
+
+      var isPresentation = false;
+      var isSubfolder = false;
+      var effectiveId = f.id;
+      var effectiveMimeType = f.mimeType;
+
+      // Classify
+      if (f.mimeType === "application/vnd.google-apps.folder") {
+        isSubfolder = true;
+      } else if (f.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation") {
+        isPresentation = true; // .pptx upload
+      } else if (f.mimeType === "application/vnd.google-apps.presentation") {
+        isPresentation = true; // Google Slides
+      } else if (f.mimeType === "application/vnd.google-apps.shortcut" && f.shortcutDetails) {
+        var targetMime = f.shortcutDetails.targetMimeType || "";
+        if (targetMime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+            targetMime === "application/vnd.google-apps.presentation") {
+          isPresentation = true;
+          effectiveId = f.shortcutDetails.targetId || f.id;
+          effectiveMimeType = targetMime;
+          logs.push("DISCOVER:     → shortcut resolved to presentation");
+        }
+      }
+
+      // Also match by name extension
+      if (!isPresentation && !isSubfolder && f.name && f.name.toLowerCase().endsWith(".pptx")) {
+        isPresentation = true;
+        logs.push("DISCOVER:     → matched by .pptx extension");
+      }
+
+      var item = {
+        id: effectiveId,
+        name: f.name,
+        mimeType: effectiveMimeType,
+        originalMimeType: f.mimeType,
+        fileExtension: f.fileExtension,
+        isPresentation: isPresentation,
+        isSubfolder: isSubfolder,
+        modifiedTime: f.modifiedTime,
+        webViewLink: f.webViewLink,
+      };
+
+      allItems.push(item);
+      if (isSubfolder) subfolders.push({ id: f.id, name: f.name });
+    });
+
+    // Step 2: Recursively scan subfolders
+    if (subfolders.length > 0) {
+      logs.push("DISCOVER: Recursing into " + subfolders.length + " subfolder(s)");
+      var subPromises = subfolders.map(function(sf) {
+        return discoverFilesInFolder(token, sf.id, folderName + "/" + sf.name, logs).then(function(sub) {
+          return sub.items.filter(function(f) { return f.isPresentation; });
+        });
+      });
+      return Promise.all(subPromises).then(function(subResults) {
+        subResults.forEach(function(files) {
+          subfolderFiles = subfolderFiles.concat(files);
+        });
+        logs.push("DISCOVER: Subfolders added " + subfolderFiles.length + " presentation file(s)");
+        return { folder: folderName, folderId: folderId, items: allItems, subfolderFiles: subfolderFiles };
+      });
+    }
+
+    return { folder: folderName, folderId: folderId, items: allItems, subfolderFiles: [] };
+  });
+}
+
 // ── 4. Raw DRIVE_ROOT accessor ────────────────────────────
 
 function getRawDriveRoot() {
@@ -386,6 +497,8 @@ export {
   resolveWorkspaceRoot,
   getWorkspaceHealth,
   getRawDriveRoot,
+  gapi,
+  discoverFilesInFolder,
   CHILD_FOLDER_NAMES,
   REQUIRED_FOLDERS,
   OPTIONAL_FOLDERS,
