@@ -2,70 +2,93 @@ const DRIVE_ROOT = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
 
 // ═══════════════════════════════════════════════════════════
 //  BRINC RETRIEVAL-FIRST SLIDES ASSEMBLER
-//  1. Load slide index from Drive
-//  2. Build assembly plan (retrieve → adapt → generate)
-//  3. Assemble final presentation
+//  Self-contained: no external imports for Vercel compat
 // ═══════════════════════════════════════════════════════════
 
-import {
-  buildAssemblyPlan,
-  adaptRetrievedContent,
-  loadIndexFromDrive,
-} from "./retrieval.js";
-
-// ── Archetype Definitions (inline for reliability) ───────
+// ── Archetype Data ────────────────────────────────────────
 
 var ARCHETYPES = {
   accelerator: {
     label: "Accelerator Program",
     sectionOrder: ["cover","title_sentence","executive_summary","challenge_framing","objectives","ecosystem","approach","scouting","startup_support","pilot_execution","commercialization","timeline","case_study","why_brinc","next_steps"],
-    tone: "confident_execution"
+    signals: ["accelerator","cohort","startup","batch","program","founder","mentor"]
   },
   incubator: {
     label: "Incubator / Venture Building",
     sectionOrder: ["cover","title_sentence","executive_summary","opportunity","approach","venture_building","scouting","pilot_execution","commercialization","timeline","case_study","team","next_steps"],
-    tone: "innovation_partner"
+    signals: ["incubator","venture building","studio","idea validation","mvp","launch"]
   },
   soft_landing: {
     label: "Soft Landing / Market Entry",
     sectionOrder: ["cover","title_sentence","executive_summary","market_opportunity","ecosystem","approach","scouting","startup_support","commercialization","timeline","case_study","why_brinc","next_steps"],
-    tone: "market_expert"
+    signals: ["soft landing","market entry","gcc","uae","localize","expand"]
   },
   sandbox: {
     label: "Sandbox / Regulator Program",
     sectionOrder: ["cover","title_sentence","executive_summary","challenge_framing","regulatory_context","approach","scouting","pilot_execution","reporting","timeline","case_study","team","next_steps"],
-    tone: "authority_confidence"
+    signals: ["sandbox","regulator","compliance","regulatory","fintech","license"]
   },
   innovation_challenge: {
     label: "Innovation Challenge",
     sectionOrder: ["cover","title_sentence","executive_summary","challenge_statement","approach","scouting","selection","startup_support","pilot_execution","awards","timeline","case_study","next_steps"],
-    tone: "energy_urgency"
+    signals: ["challenge","hackathon","competition","prize","solve","contest"]
   },
   corporate_innovation: {
     label: "Corporate Innovation",
     sectionOrder: ["cover","title_sentence","executive_summary","challenge_framing","objectives","approach","scouting","startup_support","pilot_execution","commercialization","reporting","case_study","why_brinc","next_steps"],
-    tone: "executive_partner"
+    signals: ["corporate","enterprise","innovation lab","transform","digital"]
   },
   ai_training: {
     label: "AI / Corporate Training",
     sectionOrder: ["cover","title_sentence","executive_summary","why_now","ecosystem","approach","curriculum","timeline","case_study","team","next_steps"],
-    tone: "thought_leader"
+    signals: ["ai","artificial intelligence","training","workshop","capacity building","upskill"]
   },
   government_capability: {
     label: "Government Capability Building",
     sectionOrder: ["cover","title_sentence","executive_summary","strategic_context","objectives","approach","ecosystem","scouting","startup_support","reporting","case_study","why_brinc","next_steps"],
-    tone: "government_partner"
+    signals: ["government","ministry","department","authority","capacity","smart city","vision 2030"]
   },
   executive_workshop: {
     label: "Executive Workshop",
     sectionOrder: ["cover","title_sentence","objectives","agenda","approach","case_study","next_steps"],
-    tone: "executive_partner"
+    signals: ["workshop","executive","board","stakeholder","session","strategy"]
   },
   venture_building: {
     label: "Venture Building",
     sectionOrder: ["cover","title_sentence","executive_summary","opportunity","approach","venture_building","scouting","pilot_execution","commercialization","timeline","case_study","team","next_steps"],
-    tone: "innovation_partner"
+    signals: ["venture","venture building","co-creation","studio","spin out"]
   }
+};
+
+var SLIDE_TYPE_SIGNALS = {
+  cover: ["brinc","proposal","partnership","confidential"],
+  title_sentence: ["title","opportunity","building","creating","enabling","launching"],
+  executive_summary: ["executive summary","overview","at a glance","snapshot"],
+  challenge_framing: ["challenge","problem","gap","obstacle","barrier"],
+  objectives: ["objective","goal","aim","target","kpi","outcome"],
+  why_now: ["why now","timely","urgency","momentum","window"],
+  ecosystem: ["ecosystem","landscape","market","players","stakeholders"],
+  approach: ["approach","methodology","how we work","process","framework"],
+  phased_roadmap: ["roadmap","phases","stage","milestone"],
+  timeline: ["timeline","schedule","calendar","milestone"],
+  funnel: ["funnel","pipeline","intake","screen","select"],
+  scouting: ["scouting","sourcing","selection","screening","deal flow"],
+  startup_support: ["support","mentor","coach","founder","resources"],
+  pilot_execution: ["pilot","execution","test","trial","proof of concept"],
+  commercialization: ["commercial","revenue","go-to-market","scale","deployment"],
+  case_study: ["case study","portfolio","track record","success"],
+  reporting: ["reporting","kpi","dashboard","metrics","track"],
+  team: ["team","leadership","people","expert","advisor"],
+  why_brinc: ["why brinc","differentiator","advantage","unique","track record"],
+  next_steps: ["next step","action","get started","moving forward"],
+  market_opportunity: ["market","tam","sam","opportunity","growth"],
+  regulatory_context: ["regulatory","regulation","compliance","license"],
+  opportunity: ["opportunity","market","potential","gap"],
+  venture_building: ["venture building","co-creation","build"],
+  challenge_statement: ["challenge","problem statement","solve"],
+  awards: ["prize","award","winner","incentive","reward"],
+  curriculum: ["curriculum","module","syllabus","learning"],
+  strategic_context: ["strategic","vision","d33","national","agenda"]
 };
 
 // ── Color System ────────────────────────────────────────
@@ -79,8 +102,6 @@ var COLORS = {
   veryLightGray: { red: 0.920, green: 0.920, blue: 0.920 },
   accent:        { red: 0.200, green: 0.400, blue: 0.700 },
   accentLight:   { red: 0.350, green: 0.550, blue: 0.850 },
-  green:         { red: 0.180, green: 0.620, blue: 0.380 },
-  orange:        { red: 0.920, green: 0.520, blue: 0.180 },
 };
 
 function navyText(size) { return { bold: true, fontSize: { magnitude: size, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.navy } } }; }
@@ -88,7 +109,7 @@ function whiteText(size) { return { bold: true, fontSize: { magnitude: size, uni
 function grayText(size) { return { fontSize: { magnitude: size, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.gray } } }; }
 function lightGrayText(size) { return { fontSize: { magnitude: size, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.lightGray } } }; }
 
-// ── Helpers ───────────────────────────────────────────────
+// ── HTTP Helper ───────────────────────────────────────────
 
 function gapi(token, url, init) {
   return fetch(url, Object.assign({}, init, {
@@ -129,7 +150,7 @@ function accentBar(pageId, x, y) {
   return rectangle("bar" + pageId.substring(1), pageId, x, y, 80, 4, COLORS.accent);
 }
 
-// ── Section Builders ──────────────────────────────────────
+// ── Slide Section Builders ────────────────────────────────
 
 function buildCover(sid, co, angle) {
   var r = [];
@@ -148,12 +169,12 @@ function buildCover(sid, co, angle) {
   return r;
 }
 
-function buildTitleSentence(sid, title) {
+function buildTitleSentence(sid, text) {
   var r = [];
   r.push({ createSlide: { objectId: sid, slideLayoutReference: { predefinedLayout: "BLANK" } } });
   r = r.concat(rectangle("tsbg" + sid, sid, 0, 0, 720, 540, COLORS.veryLightGray));
   r = r.concat(rectangle("tsbar" + sid, sid, 0, 0, 720, 6, COLORS.navy));
-  r = r.concat(textBox("tst" + sid, sid, 60, 140, 600, 200, title || "Building a transformative innovation program.", navyText(36), "bold,fontSize,foregroundColor"));
+  r = r.concat(textBox("tst" + sid, sid, 60, 140, 600, 200, text, navyText(36), "bold,fontSize,foregroundColor"));
   r = r.concat(textBox("tsa" + sid, sid, 60, 360, 300, 30, "\u2014 Brinc", grayText(16), "fontSize,foregroundColor"));
   return r;
 }
@@ -208,139 +229,188 @@ function buildMetrics(sid, title, metrics) {
   r.push({ createSlide: { objectId: sid, slideLayoutReference: { predefinedLayout: "BLANK" } } });
   r = r.concat(accentBar(sid, 40, 42));
   r = r.concat(textBox("ht" + sid, sid, 40, 48, 620, 50, title, navyText(28), "bold,fontSize,foregroundColor"));
-  var cols = 3;
-  var colW = 200;
-  var startX = 40;
-  var startY = 130;
+  var cols = 3, colW = 200, startX = 40, startY = 130;
   metrics.forEach(function(m, i) {
-    var col = i % cols;
-    var row = Math.floor(i / cols);
-    var x = startX + col * (colW + 20);
-    var y = startY + row * 140;
+    var col = i % cols, row = Math.floor(i / cols);
+    var x = startX + col * (colW + 20), y = startY + row * 140;
     r = r.concat(textBox("mn" + sid + "_" + i, sid, x, y, colW, 50, m.value || "\u2014", { bold: true, fontSize: { magnitude: 36, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.navy } } }, "bold,fontSize,foregroundColor"));
     r = r.concat(textBox("ml" + sid + "_" + i, sid, x, y + 50, colW, 40, m.label || "", grayText(12), "fontSize,foregroundColor"));
   });
   return r;
 }
 
-// ── Content Generator (synthetic fallback) ─────────────────
+// ── Retrieval Engine (inlined) ────────────────────────────
+
+function classifySlideType(texts) {
+  var fullText = texts.join(" ").toLowerCase();
+  var best = null, bestScore = 0;
+  for (var key in SLIDE_TYPE_SIGNALS) {
+    var score = 0;
+    SLIDE_TYPE_SIGNALS[key].forEach(function(s) { if (fullText.includes(s)) score += 3; });
+    if (score > bestScore) { best = key; bestScore = score; }
+  }
+  return best || "content";
+}
+
+function scoreCandidate(candidate, query) {
+  var score = 0, maxScore = 0;
+
+  // Slide type match (25)
+  if (candidate.slideType === query.slideType) score += 25;
+  maxScore += 25;
+
+  // Archetype match (20)
+  if (candidate.archetype === query.archetype) score += 20;
+  maxScore += 20;
+
+  // Keyword overlap (20)
+  if (query.keywords && query.keywords.length > 0 && candidate.text) {
+    var cText = candidate.text.toLowerCase();
+    var matches = 0;
+    query.keywords.forEach(function(kw) { if (cText.includes(kw.toLowerCase())) matches++; });
+    score += Math.floor(20 * matches / query.keywords.length);
+  }
+  maxScore += 20;
+
+  // Geography (15)
+  if (query.geography && candidate.text) {
+    var geo = query.geography.toLowerCase();
+    var signals = { "uae": ["uae","dubai","abu dhabi","emirates"], "gcc": ["gcc","saudi","ksa","bahrain","oman","kuwait","qatar"] };
+    var geoList = signals[geo] || [geo];
+    if (geoList.some(function(s) { return candidate.text.toLowerCase().includes(s); })) score += 15;
+  }
+  maxScore += 15;
+
+  // Offerings (15)
+  if (query.offerings && query.offerings.length > 0 && candidate.text) {
+    var cText2 = candidate.text.toLowerCase();
+    var offMatches = 0;
+    query.offerings.forEach(function(off) {
+      off.toLowerCase().split(/\s+/).filter(function(w) { return w.length > 3; }).forEach(function(w) { if (cText2.includes(w)) offMatches++; });
+    });
+    score += Math.min(15, Math.floor(15 * offMatches / query.offerings.length));
+  }
+  maxScore += 15;
+
+  // Recency (5)
+  if (candidate.modifiedTime) {
+    var age = (Date.now() - new Date(candidate.modifiedTime).getTime()) / (1000 * 60 * 60 * 24 * 30);
+    if (age < 3) score += 5; else if (age < 6) score += 3; else if (age < 12) score += 1;
+  }
+  maxScore += 5;
+
+  return maxScore > 0 ? Math.floor(score * 100 / maxScore) : 0;
+}
+
+function retrieveSlides(slideIndex, query, topN) {
+  topN = topN || 3;
+  if (!slideIndex || !slideIndex.slides || slideIndex.slides.length === 0) {
+    return { hasIndex: false, candidates: [] };
+  }
+  var scored = slideIndex.slides.map(function(s) {
+    return Object.assign({}, s, { score: scoreCandidate(s, query) });
+  }).filter(function(s) { return s.score >= 35; }).sort(function(a, b) { return b.score - a.score; }).slice(0, topN);
+
+  return {
+    hasIndex: true,
+    candidates: scored.map(function(s) { return { score: s.score, slideType: s.slideType, archetype: s.archetype, text: s.text ? s.text.substring(0, 200) : "", sourceDeck: s.sourceDeck, modifiedTime: s.modifiedTime }; })
+  };
+}
+
+function buildAssemblyPlan(slideIndex, archetype, offerings, geography) {
+  var arch = ARCHETYPES[archetype] || ARCHETYPES.accelerator;
+  var plan = [];
+  arch.sectionOrder.forEach(function(sectionType) {
+    var query = { slideType: sectionType, archetype: archetype, keywords: SLIDE_TYPE_SIGNALS[sectionType] || [], geography: geography, offerings: offerings };
+    var result = retrieveSlides(slideIndex, query, 3);
+    if (result.hasIndex && result.candidates.length > 0 && result.candidates[0].score >= 55) {
+      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "retrieved", score: result.candidates[0].score, candidate: result.candidates[0] });
+    } else if (result.hasIndex && result.candidates.length > 0) {
+      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "inspired", score: result.candidates[0].score, candidate: result.candidates[0] });
+    } else {
+      plan.push({ type: sectionType, label: sectionType.replace(/_/g, " "), source: "generated", score: 0, candidate: null });
+    }
+  });
+  return plan;
+}
+
+function adaptRetrievedContent(originalText, prospectCompany, offerings, geography) {
+  if (!originalText) return "";
+  var adapted = originalText;
+  var co = prospectCompany || "Partner";
+  var geo = geography || "the region";
+  adapted = adapted.replace(/\b(?:Client|Partner|Customer|Prospect)\b/g, co);
+  adapted = adapted.replace(/\[CLIENT\]/g, co);
+  adapted = adapted.replace(/\[PARTNER\]/g, co);
+  var currentYear = new Date().getFullYear();
+  adapted = adapted.replace(/\b20[0-2][0-9]\b/g, function(m) { var y = parseInt(m); return y < currentYear - 2 ? String(currentYear) : m; });
+  return adapted;
+}
+
+function loadIndexFromDrive(token, logs) {
+  // Find 06 Indexes folder
+  var q1 = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='06 Indexes' and trashed=false");
+  return fetch("https://www.googleapis.com/drive/v3/files?q=" + q1 + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives", {
+    headers: { Authorization: "Bearer " + token }
+  }).then(function(r) { return r.json(); }).then(function(search) {
+    if (!search.files || search.files.length === 0) {
+      logs.push("No 06 Indexes folder — will generate synthetically");
+      return null;
+    }
+    var folderId = search.files[0].id;
+    var q2 = encodeURIComponent("mimeType='application/json' and '" + folderId + "' in parents and name='slide_index.json' and trashed=false");
+    return fetch("https://www.googleapis.com/drive/v3/files?q=" + q2 + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true", {
+      headers: { Authorization: "Bearer " + token }
+    }).then(function(r) { return r.json(); }).then(function(search2) {
+      if (!search2.files || search2.files.length === 0) {
+        logs.push("No slide index file — will generate synthetically");
+        return null;
+      }
+      var fileId = search2.files[0].id;
+      return fetch("https://www.googleapis.com/drive/v3/files/" + fileId + "?alt=media&supportsAllDrives=true", {
+        headers: { Authorization: "Bearer " + token }
+      }).then(function(r) { return r.json(); }).then(function(index) {
+        logs.push("Loaded index: " + (index.slides || []).length + " slides");
+        return index;
+      });
+    });
+  }).catch(function(err) {
+    logs.push("Index load error: " + err.message);
+    return null;
+  });
+}
+
+// ── Synthetic Content Generator ───────────────────────────
 
 function generateSyntheticContent(type, co, offerings, angle, geo) {
   switch (type) {
     case "cover": return { builder: buildCover, args: [co, angle] };
     case "title_sentence": {
-      var p = [
-        "Building a " + (offerings[0] || "transformative program") + " with " + co + " to accelerate innovation",
-        "Partnering with " + co + " to launch a " + (geo || "regional") + " innovation program",
-        "Co-creating an innovation ecosystem with " + co + " through " + (offerings[0] || "structured programs")
-      ];
+      var p = ["Building a " + (offerings[0] || "transformative program") + " with " + co + " to accelerate innovation", "Partnering with " + co + " to launch a " + (geo || "regional") + " innovation program", "Co-creating an innovation ecosystem with " + co];
       return { builder: buildTitleSentence, args: [p[Math.floor(Math.random() * p.length)]] };
     }
-    case "executive_summary": return { builder: buildSectionHeader, args: [
-      "Executive Summary",
-      "A partnership between " + co + " and Brinc",
-      ["Program: " + (offerings[0] || "Innovation program"), "Approach: " + offerings.join(", "), "Outcome: Measurable innovation outcomes"]
-    ]};
-    case "challenge_framing": return { builder: buildSectionHeader, args: [
-      "The Opportunity",
-      co + " has a strategic opportunity to accelerate innovation",
-      ["Market signals indicate strong demand for " + (offerings[0] || "innovation"), "Structured programs deliver 3-5x faster commercialization", "Brinc: 75+ programs, 170+ portfolio companies, $1.69B+ valuation"]
-    ]};
-    case "objectives": return { builder: buildSectionHeader, args: [
-      "Program Objectives", null,
-      ["1. Launch " + (offerings[0] || "structured program"), "2. Source top-tier startups for " + co, "3. Execute pilots with measurable outcomes", "4. Build sustainable innovation capabilities"]
-    ]};
-    case "approach": return { builder: buildTwoColumn, args: [
-      "Our Approach", "Discovery & Design",
-      ["Diagnostic assessment", "Program co-design", "Stakeholder alignment", "Success criteria"],
-      "Execution & Scale",
-      ["Startup scouting", "Pilot sprint execution", "Commercialization support", "Knowledge transfer"]
-    ]};
-    case "scouting": return { builder: buildSectionHeader, args: [
-      "Startup Scouting & Selection",
-      "A rigorous, data-driven process",
-      ["Global sourcing through 20+ countries", "Multi-channel: events, referrals, partnerships", "Data-driven via VentureVerse", "Target: Top 1-3% of applicants"]
-    ]};
-    case "startup_support": return { builder: buildTwoColumn, args: [
-      "Startup Support Services", "Program Support",
-      ["1:1 mentorship", "Fundraising & investor intros", "Commercial pilot design", "Product guidance"],
-      "Platform & Tools",
-      ["VentureVerse analytics", "Progress tracking", "Portfolio management", "Reporting & KPIs"]
-    ]};
-    case "pilot_execution": return { builder: buildSectionHeader, args: [
-      "Pilot Execution Framework",
-      "Structured sprints with clear success criteria",
-      ["12-16 week pilot sprints with milestones", "Success criteria with measurable KPIs", "Regular reviews and stakeholder sessions", "Go/no-go framework at each gate"]
-    ]};
-    case "commercialization": return { builder: buildSectionHeader, args: [
-      "Commercialization Pathway",
-      "From pilot to commercial deployment",
-      ["Pilot validation and metrics review", "Contract negotiation and procurement", "Integration and technical onboarding", "Revenue validation and scaling"]
-    ]};
-    case "timeline": return { builder: buildTimeline, args: [
-      "Program Timeline",
-      ["Months 1-2\nDesign", "Months 3-4\nScouting", "Months 5-8\nPilots", "Months 9-12\nScale"]
-    ]};
-    case "case_study": return { builder: buildSectionHeader, args: [
-      "Relevant Experience",
-      "Proven track record across MENA",
-      ["Dubai DET / Hi2 — 40+ startups, $12M+", "EDB Manufacturing — 15 startups, 5 pilots", "MBRIF — 25 startups, 8 commercialized", "QSTP — Tech transfer program"]
-    ]};
-    case "why_brinc": return { builder: buildMetrics, args: [
-      "Why Brinc",
-      [{value:"12+",label:"Years"},{value:"75+",label:"Programs"},{value:"170+",label:"Portfolio"},{value:"$1.69B+",label:"Valuation"},{value:"20+",label:"Countries"},{value:"Tech",label:"VentureVerse"}]
-    ]};
-    case "next_steps": return { builder: buildSectionHeader, args: [
-      "Next Steps", null,
-      ["1. Finalize scope and commercial terms", "2. Sign agreement and mobilize teams", "3. Launch program design (Weeks 1-4)", "4. Execute pilot phase (Months 2-6)", "5. Scale and transition (Months 7-12)"]
-    ]};
-    case "ecosystem": return { builder: buildSectionHeader, args: [
-      "The Ecosystem",
-      "Brinc's global innovation network",
-      ["Global: 20+ countries across MENA, Asia, Europe, Americas", "Deep UAE/GCC presence", "Cross-sector: AI, climate, health, fintech, space", "Strong investor network"]
-    ]};
-    case "reporting": return { builder: buildTwoColumn, args: [
-      "Reporting & KPIs", "Tracking Metrics",
-      ["Applications received", "Selection rate (%)", "Startups funded", "Pilots launched"],
-      "Reporting Cadence",
-      ["Weekly: Team standup", "Monthly: Executive dashboard", "Quarterly: Business review", "Annual: Impact report"]
-    ]};
-    case "team": return { builder: buildSectionHeader, args: [
-      "Program Team",
-      "Dedicated Brinc team",
-      ["Program Director: Strategy & governance", "Scouting Lead: Sourcing & selection", "Mentorship Lead: Founder coaching", "Pilot Manager: Execution & handover"]
-    ]};
-    case "market_opportunity": return { builder: buildSectionHeader, args: [
-      "Market Opportunity",
-      "Strong dynamics in " + (geo || "the region"),
-      ["Growing startup ecosystem with investor interest", "Government innovation policies and funding", "Corporate demand for external innovation", "Growing pool of technical founders"]
-    ]};
-    case "why_now": return { builder: buildSectionHeader, args: [
-      "Why Now", null,
-      ["1. Innovation funding at record levels in " + (geo || "the region"), "2. Growing startup talent pool", "3. Strong government support", "4. First-mover advantage in " + (offerings[0] || "this space")]
-    ]};
-    case "strategic_context": return { builder: buildSectionHeader, args: [
-      "Strategic Context",
-      "Alignment with national priorities",
-      ["Aligned with innovation and diversification strategies", "Contributes to in-country value creation", "Supports entrepreneurship and job creation", "Positions " + co + " as innovation leader"]
-    ]};
-    case "opportunity": return { builder: buildSectionHeader, args: [
-      "The Opportunity",
-      "A significant market opportunity",
-      [co + " is positioned to capture significant value", "Early movers seeing 3-5x returns", "Brinc's methodology de-risks execution"]
-    ]};
-    case "venture_building": return { builder: buildSectionHeader, args: [
-      "Venture Building Model",
-      "From idea to launch through co-creation",
-      ["Phase 1: Ideation and validation", "Phase 2: Co-creation with " + co, "Phase 3: MVP build and testing", "Phase 4: Launch and growth support"]
-    ]};
-    case "curriculum": return { builder: buildSectionHeader, args: [
-      "Program Curriculum",
-      "Structured learning for " + co,
-      ["Module 1: Strategy & Opportunity Mapping", "Module 2: Technology Deep Dive", "Module 3: Implementation Playbook", "Module 4: Change Management", "Module 5: Capstone Project"]
-    ]};
-    default:
-      return { builder: buildSectionHeader, args: [type, null, ["[Content for " + type + "]"]] };
+    case "executive_summary": return { builder: buildSectionHeader, args: ["Executive Summary", "A partnership between " + co + " and Brinc", ["Program: " + (offerings[0] || "Innovation program"), "Approach: " + offerings.join(", "), "Outcome: Measurable innovation outcomes"]] };
+    case "challenge_framing": return { builder: buildSectionHeader, args: ["The Opportunity", co + " has a strategic opportunity to accelerate innovation", ["Strong demand for " + (offerings[0] || "innovation") + " in " + (geo || "the region"), "Structured programs deliver 3-5x faster commercialization", "Brinc: 75+ programs, 170+ portfolio companies, $1.69B+ valuation"]] };
+    case "objectives": return { builder: buildSectionHeader, args: ["Program Objectives", null, ["1. Launch " + (offerings[0] || "program"), "2. Source top-tier startups for " + co, "3. Execute pilots with measurable outcomes", "4. Build sustainable innovation capabilities"]] };
+    case "approach": return { builder: buildTwoColumn, args: ["Our Approach", "Discovery & Design", ["Diagnostic assessment", "Program co-design", "Stakeholder alignment", "Success criteria"], "Execution & Scale", ["Startup scouting", "Pilot sprint execution", "Commercialization support", "Knowledge transfer"]] };
+    case "scouting": return { builder: buildSectionHeader, args: ["Startup Scouting & Selection", "A rigorous, data-driven process", ["Global sourcing through 20+ countries", "Multi-channel: events, referrals, partnerships", "Data-driven via VentureVerse", "Target: Top 1-3% of applicants"]] };
+    case "startup_support": return { builder: buildTwoColumn, args: ["Startup Support Services", "Program Support", ["1:1 mentorship", "Fundraising & investor intros", "Commercial pilot design", "Product guidance"], "Platform & Tools", ["VentureVerse analytics", "Progress tracking", "Portfolio management", "Reporting & KPIs"]] };
+    case "pilot_execution": return { builder: buildSectionHeader, args: ["Pilot Execution Framework", "Structured sprints with clear success criteria", ["12-16 week pilot sprints with milestones", "Success criteria with measurable KPIs", "Regular reviews and stakeholder sessions", "Go/no-go framework at each gate"]] };
+    case "commercialization": return { builder: buildSectionHeader, args: ["Commercialization Pathway", "From pilot to commercial deployment", ["Pilot validation and metrics review", "Contract negotiation and procurement", "Integration and technical onboarding", "Revenue validation and scaling"]] };
+    case "timeline": return { builder: buildTimeline, args: ["Program Timeline", ["Months 1-2\nDesign", "Months 3-4\nScouting", "Months 5-8\nPilots", "Months 9-12\nScale"]] };
+    case "case_study": return { builder: buildSectionHeader, args: ["Relevant Experience", "Proven track record across MENA", ["Dubai DET / Hi2 — 40+ startups, $12M+", "EDB Manufacturing — 15 startups, 5 pilots", "MBRIF — 25 startups, 8 commercialized", "QSTP — Tech transfer program"]] };
+    case "why_brinc": return { builder: buildMetrics, args: ["Why Brinc", [{value:"12+",label:"Years"},{value:"75+",label:"Programs"},{value:"170+",label:"Portfolio"},{value:"$1.69B+",label:"Valuation"},{value:"20+",label:"Countries"},{value:"Tech",label:"VentureVerse"}]] };
+    case "next_steps": return { builder: buildSectionHeader, args: ["Next Steps", null, ["1. Finalize scope and commercial terms", "2. Sign agreement and mobilize teams", "3. Launch program design (Weeks 1-4)", "4. Execute pilot phase (Months 2-6)", "5. Scale and transition (Months 7-12)"]] };
+    case "ecosystem": return { builder: buildSectionHeader, args: ["The Ecosystem", "Brinc's global innovation network", ["Global: 20+ countries across MENA, Asia, Europe, Americas", "Deep UAE/GCC presence", "Cross-sector: AI, climate, health, fintech, space", "Strong investor network"]] };
+    case "reporting": return { builder: buildTwoColumn, args: ["Reporting & KPIs", "Tracking Metrics", ["Applications received", "Selection rate (%)", "Startups funded", "Pilots launched"], "Reporting Cadence", ["Weekly: Team standup", "Monthly: Executive dashboard", "Quarterly: Business review", "Annual: Impact report"]] };
+    case "team": return { builder: buildSectionHeader, args: ["Program Team", "Dedicated Brinc team", ["Program Director: Strategy & governance", "Scouting Lead: Sourcing & selection", "Mentorship Lead: Founder coaching", "Pilot Manager: Execution & handover"]] };
+    case "market_opportunity": return { builder: buildSectionHeader, args: ["Market Opportunity", "Strong dynamics in " + (geo || "the region"), ["Growing startup ecosystem with investor interest", "Government innovation policies and funding", "Corporate demand for external innovation", "Growing pool of technical founders"]] };
+    case "why_now": return { builder: buildSectionHeader, args: ["Why Now", null, ["1. Innovation funding at record levels in " + (geo || "the region"), "2. Growing startup talent pool", "3. Strong government support", "4. First-mover advantage in " + (offerings[0] || "this space")]] };
+    case "strategic_context": return { builder: buildSectionHeader, args: ["Strategic Context", "Alignment with national priorities", ["Aligned with innovation and diversification strategies", "Contributes to in-country value creation", "Supports entrepreneurship and job creation", "Positions " + co + " as innovation leader"]] };
+    case "opportunity": return { builder: buildSectionHeader, args: ["The Opportunity", "A significant market opportunity", [co + " is positioned to capture significant value", "Early movers seeing 3-5x returns", "Brinc's methodology de-risks execution"]] };
+    case "venture_building": return { builder: buildSectionHeader, args: ["Venture Building Model", "From idea to launch through co-creation", ["Phase 1: Ideation and validation", "Phase 2: Co-creation with " + co, "Phase 3: MVP build and testing", "Phase 4: Launch and growth support"]] };
+    case "curriculum": return { builder: buildSectionHeader, args: ["Program Curriculum", "Structured learning for " + co, ["Module 1: Strategy & Opportunity Mapping", "Module 2: Technology Deep Dive", "Module 3: Implementation Playbook", "Module 4: Change Management", "Module 5: Capstone Project"]] };
+    default: return { builder: buildSectionHeader, args: [type.replace(/_/g, " "), null, ["[Content for " + type + "]"]] };
   }
 }
 
@@ -376,10 +446,7 @@ export default function handler(req, res) {
 
   logs.push("Archetype: " + archetypeKey + " (" + arch.label + ")");
 
-  // ── STEP 1: Load slide index from Drive ──
-  var slideIndexPromise = loadIndexFromDrive(accessToken, logs);
-
-  // ── STEP 2: Token refresh + create presentation ──
+  // Token refresh
   var tokenPromise = Promise.resolve();
   if (refreshToken) {
     tokenPromise = gapi(accessToken, "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + accessToken).then(function(check) {
@@ -393,27 +460,26 @@ export default function handler(req, res) {
     });
   }
 
-  Promise.all([tokenPromise, slideIndexPromise]).then(function(results) {
-    var slideIndex = results[1];
+  // Load slide index in parallel
+  var indexPromise = tokenPromise.then(function() {
+    return loadIndexFromDrive(accessToken, logs);
+  });
 
-    // ── STEP 3: Build assembly plan ──
+  indexPromise.then(function(slideIndex) {
+    // Build assembly plan
     var plan;
     if (slideIndex && slideIndex.slides && slideIndex.slides.length > 0) {
-      logs.push("Slide index loaded: " + slideIndex.slides.length + " slides");
-      plan = buildAssemblyPlan(slideIndex, archetypeKey, offerings, geo, prospectCompany);
+      plan = buildAssemblyPlan(slideIndex, archetypeKey, offerings, geo);
       var retrieved = plan.filter(function(s) { return s.source === "retrieved"; }).length;
       var inspired = plan.filter(function(s) { return s.source === "inspired"; }).length;
       var generated = plan.filter(function(s) { return s.source === "generated"; }).length;
-      logs.push("Assembly plan: " + retrieved + " retrieved, " + inspired + " inspired, " + generated + " generated");
+      logs.push("Plan: " + retrieved + " retrieved, " + inspired + " inspired, " + generated + " generated");
     } else {
-      // No index — all generated
-      logs.push("No slide index — generating synthetically");
-      plan = arch.sectionOrder.map(function(st) {
-        return { type: st, label: st, source: "generated", score: 0, candidate: null };
-      });
+      logs.push("No index — generating synthetically");
+      plan = arch.sectionOrder.map(function(st) { return { type: st, label: st.replace(/_/g, " "), source: "generated", score: 0, candidate: null }; });
     }
 
-    // ── STEP 4: Create presentation ──
+    // Create presentation
     return gapi(accessToken, "https://slides.googleapis.com/v1/presentations", {
       method: "POST",
       body: JSON.stringify({ title: title }),
@@ -422,7 +488,7 @@ export default function handler(req, res) {
       var presId = created.data.presentationId;
       logs.push("Created: " + presId);
 
-      // ── STEP 5: Build sections from plan ──
+      // Build all sections
       var now = Date.now();
       var slideIdx = 0;
       var allReqs = [];
@@ -430,35 +496,26 @@ export default function handler(req, res) {
 
       plan.forEach(function(sec) {
         if (!sec || !sec.type) return;
-
         var sid = "s" + now + "_" + slideIdx;
         slideIdx++;
 
         var result;
-
         if (sec.source === "retrieved" && sec.candidate) {
-          // ── RETRIEVED: adapt historical content ──
           var adaptedText = adaptRetrievedContent(sec.candidate.text, prospectCompany, offerings, geo);
-          // Parse adapted text into bullets or use as-is
           var adaptedLines = adaptedText.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
           if (adaptedLines.length === 0) adaptedLines = [adaptedText.substring(0, 300)];
-
-          result = { builder: buildSectionHeader, args: [sec.label || sec.type, "Adapted from " + (sec.candidate.sourceDeck || "historical deck"), adaptedLines] };
-          logs.push("  [R] " + sec.type + " (score: " + sec.score + ") from " + (sec.candidate.sourceDeck || "?"));
-
+          result = { builder: buildSectionHeader, args: [sec.label, "Adapted from " + (sec.candidate.sourceDeck || "historical deck"), adaptedLines] };
+          logs.push("  [R] " + sec.type + " (score: " + sec.score + ")");
         } else if (sec.source === "inspired" && sec.candidate) {
-          // ── INSPIRED: blend historical content with generation ──
           var inspiredText = adaptRetrievedContent(sec.candidate.text, prospectCompany, offerings, geo);
           var inspiredLines = inspiredText.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
           if (inspiredLines.length > 0) {
-            result = { builder: buildSectionHeader, args: [sec.label || sec.type, "Based on " + (sec.candidate.sourceDeck || "historical deck"), inspiredLines] };
+            result = { builder: buildSectionHeader, args: [sec.label, "Based on " + (sec.candidate.sourceDeck || "historical deck"), inspiredLines] };
           } else {
             result = generateSyntheticContent(sec.type, prospectCompany, offerings, suggestedAngle, geo);
           }
           logs.push("  [I] " + sec.type + " (score: " + sec.score + ")");
-
         } else {
-          // ── GENERATED: build synthetically ──
           result = generateSyntheticContent(sec.type, prospectCompany, offerings, suggestedAngle, geo);
           logs.push("  [G] " + sec.type);
         }
@@ -467,63 +524,54 @@ export default function handler(req, res) {
           var builderArgs = [sid].concat(result.args || []);
           var reqs = result.builder.apply(null, builderArgs);
           allReqs = allReqs.concat(reqs);
-
-          sectionMap.push({
-            type: sec.type,
-            label: sec.label || sec.type,
-            source: sec.source,
-            score: sec.score,
-            slideIndex: slideIdx
-          });
+          sectionMap.push({ type: sec.type, label: sec.label, source: sec.source, score: sec.score, slideIndex: slideIdx });
         }
       });
 
-      logs.push("Total API requests: " + allReqs.length);
+      logs.push("Total requests: " + allReqs.length);
 
-      // ── STEP 6: Apply batchUpdate ──
+      // Apply batchUpdate
       return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
         method: "POST",
         body: JSON.stringify({ requests: allReqs }),
       }).then(function(batch) {
         if (!batch.ok) {
-          fetch("https://www.googleapis.com/drive/v3/files/" + presId, {
-            method: "DELETE", headers: { Authorization: "Bearer " + accessToken }
-          }).catch(function(){});
+          fetch("https://www.googleapis.com/drive/v3/files/" + presId, { method: "DELETE", headers: { Authorization: "Bearer " + accessToken } }).catch(function(){});
           throw new Error(batch.data.error ? batch.data.error.message : "Batch failed");
         }
         logs.push("Batch applied: " + allReqs.length + " requests");
 
-        // ── STEP 7: Folder move ──
+        // Folder move
         var folderPath = "";
-        if (DRIVE_ROOT) {
-          return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?fields=parents&supportsAllDrives=true")
-            .then(function(before) {
-              var currentParents = before.data.parents || ["root"];
-              var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='01 Generated Proposals' and trashed=false");
-              return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives")
-                .then(function(search) {
-                  var found = search.data.files || [];
-                  if (found[0]) { logs.push("Reuse folder: " + found[0].id); return found[0].id; }
-                  return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
-                    method: "POST",
-                    body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_ROOT] }),
-                  }).then(function(c) { logs.push("Created folder: " + c.data.id); return c.data.id; });
-                })
-                .then(function(folderId) {
-                  if (!folderId) return "";
-                  return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?addParents=" + folderId + "&removeParents=" + currentParents.join(",") + "&supportsAllDrives=true&fields=id,parents", { method: "PATCH" })
-                    .then(function(moved) {
-                      logs.push("Move: HTTP " + moved.status);
-                      if (moved.ok && (moved.data.parents || []).indexOf(folderId) >= 0) folderPath = "01 Generated Proposals";
-                      return folderPath;
-                    });
-                });
-            })
-            .then(function(fp) {
-              return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap };
-            });
+        if (!DRIVE_ROOT) {
+          return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap };
         }
-        return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap };
+        return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?fields=parents&supportsAllDrives=true")
+          .then(function(before) {
+            var currentParents = before.data.parents || ["root"];
+            var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='01 Generated Proposals' and trashed=false");
+            return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives")
+              .then(function(search) {
+                var found = search.data.files || [];
+                if (found[0]) { logs.push("Reuse folder: " + found[0].id); return found[0].id; }
+                return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
+                  method: "POST",
+                  body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_ROOT] }),
+                }).then(function(c) { logs.push("Created folder: " + c.data.id); return c.data.id; });
+              })
+              .then(function(folderId) {
+                if (!folderId) return "";
+                return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?addParents=" + folderId + "&removeParents=" + currentParents.join(",") + "&supportsAllDrives=true&fields=id,parents", { method: "PATCH" })
+                  .then(function(moved) {
+                    logs.push("Move: HTTP " + moved.status);
+                    if (moved.ok && (moved.data.parents || []).indexOf(folderId) >= 0) folderPath = "01 Generated Proposals";
+                    return folderPath;
+                  });
+              });
+          })
+          .then(function(fp) {
+            return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap };
+          });
       });
     });
   }).then(function(result) {
