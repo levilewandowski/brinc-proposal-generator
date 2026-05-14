@@ -124,7 +124,7 @@ function textBox(id, pageId, x, y, w, h, text, style, fields) {
   reqs.push({ createShape: {
     objectId: id, shapeType: "TEXT_BOX",
     elementProperties: { pageObjectId: pageId, size: { width: { magnitude: w, unit: "PT" }, height: { magnitude: h, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: x, translateY: y, unit: "PT" } } }
-  } });
+  });
   if (text) reqs.push({ insertText: { objectId: id, text: text } });
   if (style) reqs.push({ updateTextStyle: { objectId: id, style: style, fields: fields || "bold,fontSize,foregroundColor" } });
   return reqs;
@@ -135,14 +135,13 @@ function rectangle(id, pageId, x, y, w, h, color) {
   reqs.push({ createShape: {
     objectId: id, shapeType: "RECTANGLE",
     elementProperties: { pageObjectId: pageId, size: { width: { magnitude: w, unit: "PT" }, height: { magnitude: h, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: x, translateY: y, unit: "PT" } } }
-  } });
+  });
   if (color) {
     reqs.push({ updateShapeProperties: {
       objectId: id,
       shapeProperties: { shapeBackgroundFill: { solidFill: { color: { rgbColor: color } } } },
       fields: "shapeBackgroundFill.solidFill.color"
     } });
-  }
   return reqs;
 }
 
