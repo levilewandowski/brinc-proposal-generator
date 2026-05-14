@@ -315,7 +315,7 @@ function retrieveSlides(slideIndex, query, topN) {
 
   return {
     hasIndex: true,
-    candidates: scored.map(function(s) { return { score: s.score, slideType: s.slideType, archetype: s.archetype, text: s.text ? s.text.substring(0, 200) : "", sourceDeck: s.sourceDeck, modifiedTime: s.modifiedTime }; })
+    candidates: scored.map(function(s) { return { score: s.score, slideType: s.slideType, archetype: s.archetype, text: s.text ? s.text.substring(0, 200) : "", sourceDeck: s.sourceDeck, sourcePresentationId: s.sourcePresentationId || "", sourceSlideId: s.sourceSlideId || "", modifiedTime: s.modifiedTime }; })
   };
 }
 
