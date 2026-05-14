@@ -65,6 +65,17 @@ interface DNAEntry {
   };
 }
 
+interface FileStatus {
+  name: string;
+  folder: string;
+  presentationId?: string;
+  status: string;
+  slideCount: number;
+  dnaCount: number;
+  archetype?: string;
+  cloneable: boolean;
+}
+
 interface DeckProfile {
   fileName: string;
   folder: string;
@@ -96,6 +107,7 @@ interface ScanResult {
     rawRootName: string;
     rawRootId: string;
   };
+  fileStatuses?: FileStatus[];
   logs: string[];
 }
 
@@ -427,6 +439,63 @@ export default function SlideLibrary() {
                   value={stats.slideTypes}
                 />
               </div>
+            )}
+
+            {/* File Processing Status */}
+            {scanResult?.fileStatuses && scanResult.fileStatuses.length > 0 && (
+              <Card className="border-slate-200">
+                <CardContent className="py-4">
+                  <h3 className="text-sm font-semibold text-[#1B2A4A] mb-3 flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
+                    File Processing Status ({scanResult.fileStatuses.length})
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-slate-200">
+                          <th className="text-left py-1.5 pr-3">File</th>
+                          <th className="text-left py-1.5 pr-3">Status</th>
+                          <th className="text-right py-1.5 pr-3">Slides</th>
+                          <th className="text-right py-1.5 pr-3">DNA</th>
+                          <th className="text-left py-1.5">Presentation ID</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scanResult.fileStatuses.map((fs, i) => (
+                          <tr key={i} className="border-b border-slate-100">
+                            <td className="py-1.5 pr-3">
+                              <div className="flex items-center gap-1.5">
+                                {fs.status === "indexed" ? (
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                                ) : (
+                                  <AlertTriangle className="w-3 h-3 text-red-400" />
+                                )}
+                                <span className="font-medium text-slate-700">{fs.name}</span>
+                              </div>
+                            </td>
+                            <td className="py-1.5 pr-3">
+                              <Badge className={`text-[10px] ${
+                                fs.status === "indexed"
+                                  ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+                                  : "bg-red-100 text-red-600 border-red-300"
+                              }`} variant="outline">
+                                {fs.status}
+                              </Badge>
+                            </td>
+                            <td className="text-right py-1.5 pr-3 text-slate-600">{fs.slideCount}</td>
+                            <td className="text-right py-1.5 pr-3 text-slate-600">{fs.dnaCount}</td>
+                            <td className="py-1.5 font-mono text-[10px] text-slate-400">
+                              {fs.presentationId
+                                ? fs.presentationId.substring(0, 16) + "..."
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
             )}
 
             {/* Workspace Health */}

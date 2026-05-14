@@ -154,25 +154,25 @@ export default function handler(req, res) {
 
       var allFiles = [];
       folderResults.forEach(function(r) {
-        logs.push(r.folder + ": " + r.files.length + " PPTX file(s)");
-        r.files.forEach(function(f) { allFiles.push({ folder: r.folder, id: f.id, name: f.name, modifiedTime: f.modifiedTime }); });
+        logs.push(r.folder + ": " + r.files.length + " presentation file(s)");
+        r.files.forEach(function(f) { allFiles.push({ folder: r.folder, id: f.id, name: f.name, mimeType: f.mimeType, modifiedTime: f.modifiedTime }); });
+      });
+
+      logs.push("DISCOVERED_FILES_COUNT: " + allFiles.length);
+      allFiles.forEach(function(f, i) {
+        logs.push("  FILE[" + i + "]: name='" + f.name + "' mimeType=" + (f.mimeType || "?") + " id=" + f.id.substring(0, 12) + "...");
       });
 
       if (allFiles.length === 0) {
         return res.end(JSON.stringify({
-          ok: true, msg: "No PPTX files found", totalPptxFiles: 0,
-          workspace: {
-            rootFolderName: workspaceMeta.rootName,
-            rootFolderId: workspaceMeta.rootId,
-            isAutoCorrected: workspaceMeta.isAutoCorrected,
-            correctionReason: workspaceMeta.correctionReason,
-          },
-          fileList: [], patterns: null, logs: logs,
+          ok: true, msg: "No presentation files found", totalPptxFiles: 0,
+          workspace: { rootFolderName: workspaceMeta.rootName, rootFolderId: workspaceMeta.rootId },
+          fileList: [], fileStatuses: [], deckProfiles: [], logs: logs,
         }));
       }
 
       var filesToScan = allFiles.slice(0, 5);
-      logs.push("Deep scanning " + filesToScan.length + " file(s)...");
+      logs.push("INDEXING_INPUT_COUNT: " + filesToScan.length + " of " + allFiles.length + " discovered files");
 
       // ── PHASE 3: Get or create 07 Template Library ──
       return findOldestFolder(token, DRIVE_ROOT, "07 Template Library", logs).then(function(tmplLibId) {
@@ -191,13 +191,33 @@ export default function handler(req, res) {
         logs.push("SCAN_RESULT: deckProfiles=" + (scanResult.deckProfiles || []).length
           + " totalSlides=" + scanResult.totalSlidesScanned);
 
+        // Build per-file status from scanResult
+        var fileStatuses = (scanResult.deckProfiles || []).map(function(dp) {
+          return {
+            name: dp.fileName,
+            folder: dp.folder,
+            presentationId: dp.presentationId,
+            status: "indexed",
+            slideCount: dp.slideCount,
+            dnaCount: (dp.slideDNA || []).length,
+            archetype: dp.archetype,
+            cloneable: true,
+          };
+        });
+        var indexedNames = fileStatuses.map(function(s) { return s.name; });
+        filesToScan.forEach(function(f) {
+          if (indexedNames.indexOf(f.name) < 0) {
+            fileStatuses.push({ name: f.name, folder: f.folder, status: "failed", slideCount: 0, dnaCount: 0, cloneable: false });
+          }
+        });
+
         if (!scanResult.deckProfiles || scanResult.deckProfiles.length === 0) {
-          logs.push("INDEX: No deck profiles — extraction pipeline failed");
+          logs.push("INDEX: No deck profiles — all " + filesToScan.length + " files failed extraction");
           return res.end(JSON.stringify({
             ok: true, msg: "No slides extracted", totalPptxFiles: allFiles.length,
             workspace: { rootFolderName: workspaceMeta.rootName, rootFolderId: workspaceMeta.rootId },
             fileList: allFiles.map(function(f) { return { folder: f.folder, name: f.name, modifiedTime: f.modifiedTime }; }),
-            deckProfiles: [], logs: logs,
+            fileStatuses: fileStatuses, deckProfiles: [], logs: logs,
           }));
         }
 
@@ -225,6 +245,7 @@ export default function handler(req, res) {
               rawRootId: workspaceMeta.rawRootId,
             },
             fileList: allFiles.map(function(f) { return { folder: f.folder, name: f.name, modifiedTime: f.modifiedTime }; }),
+            fileStatuses: fileStatuses,
             ...scanResult,
             slideIndex: { slideCount: slideIndex.slides.length, deckCount: slideIndex.decks.length, builtAt: slideIndex.builtAt },
             dnaIndex: { slideCount: dnaIndex.slides.length, componentCounts: dnaIndex.componentCounts, builtAt: dnaIndex.builtAt },
@@ -530,6 +551,11 @@ function readAndExtractSlides(token, presId, file, logs) {
 // ── Deep File Scan ────────────────────────────────────────
 
 function deepScanFiles(token, files, templateLibId, logs) {
+  logs.push("DEEPSCAN: starting with " + files.length + " files");
+  files.forEach(function(f, i) {
+    logs.push("DEEPSCAN: input[" + i + "] name='" + f.name + "' mimeType=" + (f.mimeType || "?") + " folder=" + f.folder);
+  });
+
   var deckProfiles = [];
   var allSlideTexts = [];
   var allSlideTypes = [];
@@ -539,6 +565,7 @@ function deepScanFiles(token, files, templateLibId, logs) {
 
   function scanFile(index) {
     if (index >= files.length) {
+      logs.push("DEEPSCAN: recursion complete — deckProfiles=" + deckProfiles.length + " totalSlides=" + allSlideTypes.length);
       var topPhrases = extractRecurringPhrases(allSlideTexts, 2);
       var archetypeBreakdown = {};
       deckProfiles.forEach(function(d) { if (d.archetype) archetypeBreakdown[d.archetype] = (archetypeBreakdown[d.archetype] || 0) + 1; });
