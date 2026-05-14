@@ -156,7 +156,7 @@ function extractPatterns(token, files, logs) {
   return processFile(0);
 }
 
-module.exports = function(req, res) {
+export default function handler(req, res) {
   res.setHeader("Content-Type", "application/json");
 
   if (req.method === "GET" && !req.query.accessToken) {

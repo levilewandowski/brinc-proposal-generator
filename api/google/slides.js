@@ -1,6 +1,6 @@
 const DRIVE_ROOT = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
 
-module.exports = function(req, res) {
+export default function handler(req, res) {
   res.setHeader("Content-Type", "application/json");
 
   if (req.method === "GET") {
