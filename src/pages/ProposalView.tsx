@@ -18,6 +18,7 @@ export default function ProposalView() {
 
   const [creating, setCreating] = useState(false);
   const [slidesUrl, setSlidesUrl] = useState<string | null>(null);
+  const [assemblyMap, setAssemblyMap] = useState<any[]>([]);
 
   if (!proposal) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -81,8 +82,11 @@ export default function ProposalView() {
       }
 
       setSlidesUrl(data.webViewLink);
-      const sectionFlow = data.sectionFlow || [];
-      toast.success(`Slides created: ${data.slideCount} slides${sectionFlow.length > 0 ? " (" + sectionFlow.join(" > ") + ")" : ""}`);
+      setAssemblyMap(data.sectionMap || []);
+      const retrieved = (data.sectionMap || []).filter((s: any) => s.source === "retrieved").length;
+      const inspired = (data.sectionMap || []).filter((s: any) => s.source === "inspired").length;
+      const generated = (data.sectionMap || []).filter((s: any) => s.source === "generated").length;
+      toast.success(`Slides: ${data.slideCount} (${retrieved} retrieved, ${inspired} inspired, ${generated} generated)`);
     } catch (err: any) {
       console.error("[Create Slides] Error:", err);
       toast.error("Failed to create slides: " + (err.message || String(err)));
@@ -148,15 +152,58 @@ export default function ProposalView() {
             </Card>
           </div>
           <div className="lg:col-span-2 space-y-6">
-            <Card className="border-slate-200 shadow-sm"><CardHeader className="pb-3 flex justify-between"><CardTitle className="text-sm">Generated Deck</CardTitle></CardHeader>
+            {/* Assembly Map */}
+            {assemblyMap.length > 0 && (
+              <Card className="border-slate-200 shadow-sm">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm text-[#1B2A4A]">Assembly Breakdown</CardTitle>
+                    <div className="flex gap-2 text-xs">
+                      <Badge className="bg-green-50 text-green-700 border-green-200">
+                        {assemblyMap.filter(s => s.source === "retrieved").length} Retrieved
+                      </Badge>
+                      <Badge className="bg-amber-50 text-amber-700 border-amber-200">
+                        {assemblyMap.filter(s => s.source === "inspired").length} Inspired
+                      </Badge>
+                      <Badge className="bg-slate-50 text-slate-600 border-slate-200">
+                        {assemblyMap.filter(s => s.source === "generated").length} Generated
+                      </Badge>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-1.5">
+                    {assemblyMap.map((sec: any, i: number) => (
+                      <div key={i} className="flex items-center gap-3 text-sm py-1.5 px-2 rounded hover:bg-slate-50">
+                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
+                          sec.source === "retrieved" ? "bg-green-500 text-white" :
+                          sec.source === "inspired" ? "bg-amber-500 text-white" :
+                          "bg-slate-300 text-slate-600"
+                        }`}>{i + 1}</span>
+                        <span className="flex-1 font-medium text-slate-700">{sec.label || sec.type}</span>
+                        <Badge variant="outline" className={`text-[10px] capitalize ${
+                          sec.source === "retrieved" ? "border-green-200 text-green-600 bg-green-50" :
+                          sec.source === "inspired" ? "border-amber-200 text-amber-600 bg-amber-50" :
+                          "border-slate-200 text-slate-500 bg-slate-50"
+                        }`}>
+                          {sec.source === "retrieved" ? "R" : sec.source === "inspired" ? "I" : "G"}
+                          {sec.score > 0 ? ` ${sec.score}` : ""}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            <Card className="border-slate-200 shadow-sm"><CardHeader className="pb-3 flex justify-between"><CardTitle className="text-sm">Deck Preview</CardTitle></CardHeader>
               <CardContent>
                 <div className="space-y-3">
                   <Slide num={1} title="Cover" content={`${proposal.prospectCompany || "Partner"} x Brinc`} type="cover" />
-                  <Slide num={2} title="Strategic Context" content={`Why ${proposal.prospectCompany || "this partnership"} matters now...`} type="content" />
-                  <Slide num={3} title="Proposed Collaboration" content={offerings.slice(0, 3).join(" \u00b7 ")} type="content" />
-                  {proposal.includeOverview && <><Slide num={4} title="Brinc Overview" content="12+ years \u00b7 75+ programs \u00b7 170+ portfolio companies \u00b7 $1.69B+" type="content" /><Slide num={5} title="Our Approach" content="Tech-enabled, global approach with data-driven tools" type="content" /></>}
-                  {proposal.includeCaseStudies && <Slide num={proposal.includeOverview ? 6 : 4} title="Relevant Experience" content="MENA case studies: DET Hi2, EDB Accelerator, MBRIF" type="content" />}
-                  <Slide num={3 + (proposal.includeOverview ? 2 : 0) + (proposal.includeCaseStudies ? 1 : 0)} title="Next Steps" content="Contract \u2192 Mobilize \u2192 Timeline \u2192 Execute" type="final" />
+                  <Slide num={2} title="Title Sentence" content={`${proposal.prospectCompany || "Partner"} x Brinc — Partnership Proposal`} type="content" />
+                  <Slide num={3} title="Executive Summary" content="Program overview, objectives, and approach at a glance" type="content" />
+                  <Slide num={4} title="The Opportunity" content={`Why ${proposal.prospectCompany || "this"} should act now`} type="content" />
+                  <Slide num={5} title="Proposed Collaboration" content={offerings.slice(0, 3).join(" \u00b7 ")} type="content" />
+                  <Slide num={6} title="Next Steps" content="Contract \u2192 Mobilize \u2192 Timeline \u2192 Execute" type="final" />
                 </div>
               </CardContent>
             </Card>

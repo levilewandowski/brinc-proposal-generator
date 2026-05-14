@@ -1,13 +1,16 @@
 const DRIVE_ROOT = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
 
-// Import archetype engine
 import {
   classifyDeck,
   classifySlide,
   extractRecurringPhrases,
   DECK_ARCHETYPES,
-  CONTENT_PATTERNS
 } from "./archetypes.js";
+
+import {
+  buildSlideIndex,
+  saveIndexToDrive,
+} from "./retrieval.js";
 
 function gapi(token, url, init) {
   return fetch(url, Object.assign({}, init, {
@@ -37,12 +40,11 @@ export default function handler(req, res) {
   if (!token) return res.status(400).json({ error: "Missing accessToken" });
 
   var logs = [];
-  var scanMode = req.query.mode || "full"; // "full", "files", or "diagnostic"
+  var scanMode = req.query.mode || "full";
 
   logs.push("Scan mode: " + scanMode);
   logs.push("DRIVE_ROOT: " + DRIVE_ROOT.substring(0, 15) + "...");
 
-  // ── STEP 1: List ALL children of DRIVE_ROOT ──
   var listUrl = "https://www.googleapis.com/drive/v3/files?q="
     + encodeURIComponent("'" + DRIVE_ROOT + "' in parents and trashed=false")
     + "&fields=files(id,name,mimeType,modifiedTime)"
@@ -55,7 +57,6 @@ export default function handler(req, res) {
     var allChildren = listResult.data.files || [];
     logs.push("Found " + allChildren.length + " item(s) under DRIVE_ROOT");
 
-    // Filter to folders
     var folders = {};
     allChildren.forEach(function(f) {
       if (f.mimeType === "application/vnd.google-apps.folder") {
@@ -64,12 +65,10 @@ export default function handler(req, res) {
       }
     });
 
-    // Match sub-folders
     var sourceId = folders["02 Source Decks"] || null;
     var tmplId = folders["03 Templates"] || null;
-    var genId = folders["01 Generated Proposals"] || null;
 
-    logs.push("Matched: 02 Source Decks=" + (sourceId ? "YES" : "NO") + ", 03 Templates=" + (tmplId ? "YES" : "NO") + ", 01 Generated=" + (genId ? "YES" : "NO"));
+    logs.push("Matched: 02 Source Decks=" + (sourceId ? "YES" : "NO") + ", 03 Templates=" + (tmplId ? "YES" : "NO"));
 
     if (!sourceId && !tmplId) {
       return res.end(JSON.stringify({
@@ -82,7 +81,6 @@ export default function handler(req, res) {
       }));
     }
 
-    // ── STEP 2: List PPTX files in each folder ──
     var lists = [];
     if (sourceId) {
       var sq = encodeURIComponent("mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' and '" + sourceId + "' in parents and trashed=false");
@@ -101,7 +99,7 @@ export default function handler(req, res) {
     return Promise.all(lists);
 
   }).then(function(folderResults) {
-    if (!Array.isArray(folderResults)) return; // Already responded above
+    if (!Array.isArray(folderResults)) return;
 
     var allFiles = [];
     folderResults.forEach(function(r) {
@@ -111,28 +109,35 @@ export default function handler(req, res) {
 
     if (allFiles.length === 0) {
       return res.end(JSON.stringify({
-        ok: true,
-        msg: "No PPTX files found",
-        totalPptxFiles: 0,
-        fileList: [],
-        patterns: null,
-        logs: logs,
+        ok: true, msg: "No PPTX files found", totalPptxFiles: 0,
+        fileList: [], patterns: null, logs: logs,
       }));
     }
 
-    // ── STEP 3: Deep scan each file (classify archetype + slides) ──
     var filesToScan = allFiles.slice(0, 5);
     logs.push("Deep scanning " + filesToScan.length + " file(s)...");
 
     return deepScanFiles(token, filesToScan, logs).then(function(scanResult) {
-      return res.end(JSON.stringify({
-        ok: true,
-        totalPptxFiles: allFiles.length,
-        scannedFiles: filesToScan.length,
-        fileList: allFiles.map(function(f) { return { folder: f.folder, name: f.name, modifiedTime: f.modifiedTime }; }),
-        ...scanResult,
-        logs: logs,
-      }));
+      // Build and persist slide index
+      logs.push("Building slide index...");
+      var slideIndex = buildSlideIndex(scanResult);
+      logs.push("Index: " + slideIndex.slides.length + " slides indexed");
+
+      return saveIndexToDrive(token, slideIndex, logs).then(function() {
+        return res.end(JSON.stringify({
+          ok: true,
+          totalPptxFiles: allFiles.length,
+          scannedFiles: filesToScan.length,
+          fileList: allFiles.map(function(f) { return { folder: f.folder, name: f.name, modifiedTime: f.modifiedTime }; }),
+          ...scanResult,
+          slideIndex: {
+            slideCount: slideIndex.slides.length,
+            deckCount: slideIndex.decks.length,
+            builtAt: slideIndex.builtAt,
+          },
+          logs: logs,
+        }));
+      });
     });
 
   }).catch(function(err) {
@@ -153,28 +158,16 @@ function deepScanFiles(token, files, logs) {
   var sectionFlowCounts = {};
   var contentSamples = {};
   var archetypeCounts = {};
-  var recurringPhrases = [];
 
   function scanFile(index) {
     if (index >= files.length) {
-      // Done — compile results
       var topPhrases = extractRecurringPhrases(allSlideTexts, 2);
-
-      // Count archetypes
       var archetypeBreakdown = {};
       deckProfiles.forEach(function(d) {
-        if (d.archetype) {
-          archetypeBreakdown[d.archetype] = (archetypeBreakdown[d.archetype] || 0) + 1;
-        }
+        if (d.archetype) archetypeBreakdown[d.archetype] = (archetypeBreakdown[d.archetype] || 0) + 1;
       });
-
-      // Count slide types
       var slideTypeCounts = {};
-      allSlideTypes.forEach(function(st) {
-        slideTypeCounts[st] = (slideTypeCounts[st] || 0) + 1;
-      });
-
-      // Layout preferences
+      allSlideTypes.forEach(function(st) { slideTypeCounts[st] = (slideTypeCounts[st] || 0) + 1; });
       var layoutCounts = {};
       allSlideLayouts.forEach(function(l) { layoutCounts[l] = (layoutCounts[l] || 0) + 1; });
 
@@ -204,7 +197,7 @@ function deepScanFiles(token, files, logs) {
 
       return gapi(token,
         "https://slides.googleapis.com/v1/presentations/" + tempId
-        + "?fields=presentationId,title,slides(objectId,slideProperties(layout(objectId,predefinedLayout)),pageElements(shape(shapeType),shape(text(textElements(content,textRun(content,style(bold,fontSize,foregroundColor)))))))"
+        + "?fields=presentationId,title,slides(objectId,slideProperties(layout(objectId,predefinedLayout)),pageElements(shape(shapeType),shape(text(textElements(content,textRun(content,style(bold,fontSize,foregroundColor))))))))"
       ).then(function(pres) {
         var slides = pres.data.slides || [];
         logs.push("  " + file.name + ": " + slides.length + " slides");
@@ -213,6 +206,7 @@ function deepScanFiles(token, files, logs) {
         var slideTypes = [];
         var slideLayouts = [];
         var sectionFlow = [];
+        var slideDetails = [];
 
         slides.forEach(function(slide, sIdx) {
           var texts = [];
@@ -259,6 +253,16 @@ function deepScanFiles(token, files, logs) {
             var sample = texts.slice(0, 3).join(" | ").substring(0, 150);
             if (sample.length > 10) contentSamples[stKey].push(sample);
           }
+
+          // Store slide detail for indexing
+          slideDetails.push({
+            slideId: slide.objectId,
+            slideType: classification.type,
+            sectionTag: classification.type,
+            text: combinedText,
+            layout: layout,
+            confidence: classification.confidence || 0.5,
+          });
         });
 
         // Classify deck archetype
@@ -266,21 +270,20 @@ function deepScanFiles(token, files, logs) {
         var archetypeKey = deckClassification.archetype;
         archetypeCounts[archetypeKey] = (archetypeCounts[archetypeKey] || 0) + 1;
 
-        // Count section flow
         var flowKey = sectionFlow.join(" > ");
         sectionFlowCounts[flowKey] = (sectionFlowCounts[flowKey] || 0) + 1;
 
-        // Build deck profile
         var profile = {
           fileName: file.name,
           folder: file.folder,
+          presentationId: tempId,
+          modifiedTime: file.modifiedTime,
           slideCount: slides.length,
           archetype: archetypeKey,
           archetypeLabel: DECK_ARCHETYPES[archetypeKey] ? DECK_ARCHETYPES[archetypeKey].label : archetypeKey,
           archetypeConfidence: deckClassification.confidence,
           sectionFlow: sectionFlow,
-          slideTypes: slideTypes,
-          layouts: slideLayouts,
+          slides: slideDetails,
         };
 
         deckProfiles.push(profile);
@@ -288,16 +291,14 @@ function deepScanFiles(token, files, logs) {
 
         // Clean up temp copy
         fetch("https://www.googleapis.com/drive/v3/files/" + tempId, {
-          method: "DELETE",
-          headers: { Authorization: "Bearer " + token }
+          method: "DELETE", headers: { Authorization: "Bearer " + token }
         }).catch(function(){});
 
         return scanFile(index + 1);
 
       }).catch(function(err) {
         fetch("https://www.googleapis.com/drive/v3/files/" + tempId, {
-          method: "DELETE",
-          headers: { Authorization: "Bearer " + token }
+          method: "DELETE", headers: { Authorization: "Bearer " + token }
         }).catch(function(){});
         logs.push("  Error scanning " + file.name + ": " + (err.message || String(err)));
         return scanFile(index + 1);
