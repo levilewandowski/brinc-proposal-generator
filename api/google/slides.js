@@ -1,7 +1,9 @@
 const DRIVE_ROOT = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
 
 // ═══════════════════════════════════════════════════════════
-//  BRINC RETRIEVAL-FIRST SLIDES ASSEMBLER
+//  BRINC PROPOSAL ASSEMBLER
+
+import { orchestrateProposal, polishContent } from "./orchestrator.js";
 //  Self-contained: no external imports for Vercel compat
 // ═══════════════════════════════════════════════════════════
 
@@ -680,6 +682,8 @@ export default function handler(req, res) {
   var suggestedAngle = body.suggestedAngle || "";
   var archetypeKey = body.archetype || "accelerator";
   var geo = body.geography || "";
+  var prospectName = body.prospectName || "";
+  var otherNotes = body.otherNotes || "";
 
   var logs = [];
   var title = prospectCompany + " x Brinc";
@@ -709,34 +713,39 @@ export default function handler(req, res) {
     return loadDNAIndexFromDrive(accessToken, logs);
   });
 
+  // ═══════════════════════════════════════════════════════════
+  //  ORCHESTRATOR-DRIVEN ASSEMBLY
+  //  CLASS A: Dynamic strategic slides (2-8)
+  //  CLASS B: Canonical static slides (appended)
+  // ═══════════════════════════════════════════════════════════
+
   Promise.all([indexPromise, dnaPromise]).then(function(results) {
     var slideIndex = results[0];
     var dnaIndex = results[1];
 
-    // Build assembly plan with DNA + visual similarity
-    var plan;
-    if (slideIndex && slideIndex.slides && slideIndex.slides.length > 0) {
-      plan = buildAssemblyPlan(slideIndex, dnaIndex, archetypeKey, offerings, geo);
-      var cloned = plan.filter(function(s) { return s.source === "cloned"; }).length;
-      var retrieved = plan.filter(function(s) { return s.source === "retrieved"; }).length;
-      var inspired = plan.filter(function(s) { return s.source === "inspired"; }).length;
-      var generated = plan.filter(function(s) { return s.source === "generated"; }).length;
-      logs.push("Plan: " + cloned + " cloned, " + retrieved + " retrieved, " + inspired + " inspired, " + generated + " generated");
-    } else {
-      logs.push("No index — generating synthetically");
-      plan = arch.sectionOrder.map(function(st) { return { type: st, label: st.replace(/_/g, " "), source: "generated", score: 0, candidate: null, dna: null }; });
-    }
+    // ── STEP 1: Orchestrate proposal ──
+    var orchestration = orchestrateProposal({
+      prospectCompany: prospectCompany,
+      prospectName: prospectName,
+      offerings: offerings,
+      suggestedAngle: suggestedAngle,
+      archetype: archetypeKey,
+      geography: geo,
+      otherNotes: otherNotes,
+    });
 
-    // Apply deck coherence — rhythm, pacing, adjacent-slide consistency
-    plan = applyCoherence(plan, archetypeKey);
-    var coherenceBoosts = plan.filter(function(s) { return s.preserveStyle; }).length;
-    if (coherenceBoosts > 0) logs.push("Coherence: " + coherenceBoosts + " slides marked for style preservation");
+    var angle = orchestration.angle;
+    var dynamicSlides = orchestration.dynamicSlides;
+    var canonicalSlides = orchestration.canonicalSlides;
 
-    // Lineage tracking
+    logs.push("=== ORCHESTRATOR ===");
+    logs.push("Thesis: " + angle.thesis.substring(0, 80));
+    logs.push("Dynamic: " + dynamicSlides.length + ", Canonical: " + canonicalSlides.length);
+
     var lineageRecords = [];
-    var inputs = { archetype: archetypeKey, prospectCompany: prospectCompany, offerings: offerings, geography: geo };
+    var lineageInputs = { archetype: archetypeKey, prospectCompany: prospectCompany, offerings: offerings, geography: geo };
 
-    // Create presentation
+    // ── STEP 2: Create presentation ──
     return gapi(accessToken, "https://slides.googleapis.com/v1/presentations", {
       method: "POST",
       body: JSON.stringify({ title: title }),
@@ -745,61 +754,86 @@ export default function handler(req, res) {
       var presId = created.data.presentationId;
       logs.push("Created: " + presId);
 
-      // Build all sections
       var now = Date.now();
       var slideIdx = 0;
       var allReqs = [];
       var sectionMap = [];
 
-      plan.forEach(function(sec) {
-        if (!sec || !sec.type) return;
+      // ── STEP 3: COVER ──
+      var coverId = "s" + now + "_" + slideIdx;
+      slideIdx++;
+      var coverReqs = buildCover(coverId, prospectCompany, polishContent(angle.thesis));
+      allReqs = allReqs.concat(coverReqs);
+      sectionMap.push({ type: "cover", label: "Cover", source: "generated", slideIndex: slideIdx, class: "A" });
+      logs.push("  [G] cover");
+
+      // ── STEP 4: CLASS A — Dynamic Strategic ──
+      logs.push("--- CLASS A ---");
+      dynamicSlides.forEach(function(planSlide) {
         var sid = "s" + now + "_" + slideIdx;
         slideIdx++;
 
+        var query = { slideType: planSlide.type, archetype: archetypeKey, keywords: SLIDE_TYPE_SIGNALS[planSlide.type] || [], geography: geo, offerings: offerings };
+        var retrieval = retrieveSlides(slideIndex, query, 3);
+        var hasMatch = retrieval.hasIndex && retrieval.candidates.length > 0;
+        var best = hasMatch ? retrieval.candidates[0] : null;
+        var score = best ? best.score : 0;
+
+        var source = "generated";
+        if (score >= 55) source = "retrieved";
+        else if (score >= 35) source = "inspired";
+
         var result;
-
-        if (sec.source === "cloned" && sec.dna && sec.dna.sourcePresentationId) {
-          // ── TEMPLATE CLONING: physically copy the historical slide ──
-          var cloneReq = buildCloneSlideRequest(sid, sec.dna.sourcePresentationId, sec.dna.slideId);
-          allReqs.push(cloneReq);
-          sectionMap.push({ type: sec.type, label: sec.label, source: "cloned", score: sec.score, textScore: sec.textScore || 0, visualScore: sec.visualScore || 0, slideIndex: slideIdx, preserveStyle: sec.preserveStyle || false });
-          lineageRecords.push(createLineageRecord(sec, presId, inputs));
-          logs.push("  [C] " + sec.type + " (score: " + sec.score + ", visual: " + (sec.visualScore || 0) + ") from " + sec.dna.sourceDeck);
-          return;
-
-        } else if (sec.source === "retrieved" && sec.candidate) {
-          var adaptedText = adaptRetrievedContent(sec.candidate.text, prospectCompany, offerings, geo);
-          var adaptedLines = adaptedText.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
-          if (adaptedLines.length === 0) adaptedLines = [adaptedText.substring(0, 300)];
-          result = { builder: buildSectionHeader, args: [sec.label, "Adapted from " + (sec.candidate.sourceDeck || "historical deck"), adaptedLines] };
-          logs.push("  [R] " + sec.type + " (score: " + sec.score + ")");
-        } else if (sec.source === "inspired" && sec.candidate) {
-          var inspiredText = adaptRetrievedContent(sec.candidate.text, prospectCompany, offerings, geo);
-          var inspiredLines = inspiredText.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
-          if (inspiredLines.length > 0) {
-            result = { builder: buildSectionHeader, args: [sec.label, "Based on " + (sec.candidate.sourceDeck || "historical deck"), inspiredLines] };
+        if (source === "retrieved" && best) {
+          var adapted = polishContent(adaptRetrievedContent(best.text, prospectCompany, offerings, geo));
+          var lines = adapted.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
+          if (lines.length === 0) lines = [adapted.substring(0, 300)];
+          result = { builder: buildSectionHeader, args: [planSlide.label, null, lines] };
+          logs.push("  [R] " + planSlide.type + " (" + score + ")");
+        } else if (source === "inspired" && best) {
+          var inspired = polishContent(adaptRetrievedContent(best.text, prospectCompany, offerings, geo));
+          var iLines = inspired.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
+          if (iLines.length > 0) {
+            result = { builder: buildSectionHeader, args: [planSlide.label, null, iLines] };
           } else {
-            result = generateSyntheticContent(sec.type, prospectCompany, offerings, suggestedAngle, geo);
+            result = generateSyntheticContent(planSlide.type, prospectCompany, offerings, angle.thesis, geo);
           }
-          logs.push("  [I] " + sec.type + " (score: " + sec.score + ")");
+          logs.push("  [I] " + planSlide.type + " (" + score + ")");
         } else {
-          result = generateSyntheticContent(sec.type, prospectCompany, offerings, suggestedAngle, geo);
-          logs.push("  [G] " + sec.type);
+          var synth = generateSyntheticContent(planSlide.type, prospectCompany, offerings, angle.thesis, geo);
+          if (synth && synth.args && synth.args[2]) synth.args[2] = polishContent(synth.args[2]);
+          result = synth;
+          logs.push("  [G] " + planSlide.type);
         }
 
         if (result && result.builder) {
-          var builderArgs = [sid].concat(result.args || []);
-          var reqs = result.builder.apply(null, builderArgs);
+          var bArgs = [sid].concat(result.args || []);
+          var reqs = result.builder.apply(null, bArgs);
           allReqs = allReqs.concat(reqs);
-          sectionMap.push({ type: sec.type, label: sec.label, source: sec.source, score: sec.score, textScore: sec.textScore || 0, visualScore: sec.visualScore || 0, slideIndex: slideIdx, preserveStyle: sec.preserveStyle || false });
-          lineageRecords.push(createLineageRecord(sec, presId, inputs));
+          sectionMap.push({ type: planSlide.type, label: planSlide.label, source: source, score: score, slideIndex: slideIdx, class: "A" });
+          lineageRecords.push({ timestamp: new Date().toISOString(), generationMode: source, archetype: archetypeKey, sectionType: planSlide.type, combinedScore: score, finalPresentationId: presId });
         }
       });
 
-      logs.push("Total requests: " + allReqs.length);
-      logs.push("Lineage: " + lineageRecords.length + " records tracked");
+      // ── STEP 5: CLASS B — Canonical Static ──
+      logs.push("--- CLASS B ---");
+      canonicalSlides.forEach(function(planSlide) {
+        var sid = "s" + now + "_" + slideIdx;
+        slideIdx++;
+        var result = generateSyntheticContent(planSlide.type, prospectCompany, offerings, angle.thesis, geo);
+        if (result && result.args && result.args[2]) result.args[2] = polishContent(result.args[2]);
+        if (result && result.builder) {
+          var bArgs = [sid].concat(result.args || []);
+          var reqs = result.builder.apply(null, bArgs);
+          allReqs = allReqs.concat(reqs);
+          sectionMap.push({ type: planSlide.type, label: planSlide.label, source: "canonical", score: 0, slideIndex: slideIdx, class: "B" });
+        }
+        logs.push("  [B] " + planSlide.type);
+      });
 
-      // Apply batchUpdate
+      logs.push("Total: " + allReqs.length + " requests, " + lineageRecords.length + " lineage");
+
+      // ── STEP 6: batchUpdate ──
       return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
         method: "POST",
         body: JSON.stringify({ requests: allReqs }),
@@ -809,16 +843,11 @@ export default function handler(req, res) {
           throw new Error(batch.data.error ? batch.data.error.message : "Batch failed");
         }
         logs.push("Batch applied: " + allReqs.length + " requests");
+        if (lineageRecords.length > 0) saveLineage(accessToken, lineageRecords, logs).catch(function(){});
 
-        // Save lineage (fire and forget — don't block response)
-        if (lineageRecords.length > 0) {
-          saveLineage(accessToken, lineageRecords, logs).catch(function(){});
-        }
-
-        // Folder move
         var folderPath = "";
         if (!DRIVE_ROOT) {
-          return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap };
+          return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle };
         }
         return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?fields=parents&supportsAllDrives=true")
           .then(function(before) {
@@ -827,24 +856,17 @@ export default function handler(req, res) {
             return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives")
               .then(function(search) {
                 var found = search.data.files || [];
-                if (found[0]) { logs.push("Reuse folder: " + found[0].id); return found[0].id; }
-                return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
-                  method: "POST",
-                  body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_ROOT] }),
-                }).then(function(c) { logs.push("Created folder: " + c.data.id); return c.data.id; });
+                if (found[0]) return found[0].id;
+                return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", { method: "POST", body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_ROOT] }) }).then(function(c) { return c.data.id; });
               })
               .then(function(folderId) {
                 if (!folderId) return "";
                 return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?addParents=" + folderId + "&removeParents=" + currentParents.join(",") + "&supportsAllDrives=true&fields=id,parents", { method: "PATCH" })
-                  .then(function(moved) {
-                    logs.push("Move: HTTP " + moved.status);
-                    if (moved.ok && (moved.data.parents || []).indexOf(folderId) >= 0) folderPath = "01 Generated Proposals";
-                    return folderPath;
-                  });
+                  .then(function(moved) { if (moved.ok && (moved.data.parents || []).indexOf(folderId) >= 0) folderPath = "01 Generated Proposals"; return folderPath; });
+              })
+              .then(function(fp) {
+                return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle };
               });
-          })
-          .then(function(fp) {
-            return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length };
           });
       });
     });
