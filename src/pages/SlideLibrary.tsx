@@ -24,6 +24,10 @@ import {
   BarChart3,
   Layers,
   CheckCircle2,
+  HeartPulse,
+  ShieldCheck,
+  ShieldAlert,
+  ArrowUpCircle,
 } from "lucide-react";
 
 interface SlideIndexEntry {
@@ -84,7 +88,46 @@ interface ScanResult {
   dnaIndex: { slideCount: number; componentCounts: Record<string, number> };
   availableFolders?: string[];
   allChildrenCount?: number;
+  workspace?: {
+    rootFolderName: string;
+    rootFolderId: string;
+    isAutoCorrected: boolean;
+    correctionReason: string;
+    rawRootName: string;
+    rawRootId: string;
+  };
   logs: string[];
+}
+
+interface WorkspaceHealth {
+  ok: boolean;
+  healthy: boolean;
+  workspace: {
+    rootFolderName: string;
+    rootFolderId: string;
+    rootFolderPath: string;
+    isAutoCorrected: boolean;
+    correctionReason: string;
+    rawRootName: string;
+    rawRootId: string;
+  };
+  summary: {
+    totalChildren: number;
+    requiredFoldersPresent: number;
+    requiredFoldersMissing: number;
+    optionalFoldersPresent: number;
+    folderNames: string[];
+  };
+  requiredFolders: {
+    present: string[];
+    missing: string[];
+  };
+  optionalFolders: {
+    present: string[];
+    missing: string[];
+  };
+  pptxFiles: Record<string, { folderName: string; folderId: string; count: number }>;
+  diagnostics: string[];
 }
 
 const SLIDE_TYPE_COLORS: Record<string, string> = {
@@ -127,6 +170,8 @@ export default function SlideLibrary() {
   const [filterType, setFilterType] = useState<string>("");
   const [filterArchetype, setFilterArchetype] = useState<string>("");
   const [selectedDeck, setSelectedDeck] = useState<string>("");
+  const [health, setHealth] = useState<WorkspaceHealth | null>(null);
+  const [checkingHealth, setCheckingHealth] = useState(false);
   const accessToken = localStorage.getItem("brinc_google_access_token");
 
   const handleScan = async () => {
@@ -156,9 +201,35 @@ export default function SlideLibrary() {
     }
   };
 
+  const checkWorkspaceHealth = async () => {
+    if (!accessToken) {
+      toast.error("Please connect your Google account first");
+      return;
+    }
+    try {
+      setCheckingHealth(true);
+      const res = await fetch(
+        "/api/google/workspace-health?accessToken=" + encodeURIComponent(accessToken)
+      );
+      const data = await res.json();
+      setHealth(data);
+      if (data.workspace?.isAutoCorrected) {
+        toast.success("Workspace auto-corrected: " + data.workspace.correctionReason);
+      } else if (data.healthy) {
+        toast.success("Workspace healthy: " + data.workspace.rootFolderName);
+      } else {
+        toast.warning("Workspace issue detected — check diagnostics");
+      }
+    } catch (err: any) {
+      toast.error("Health check failed: " + (err.message || String(err)));
+    } finally {
+      setCheckingHealth(false);
+    }
+  };
+
   useEffect(() => {
-    if (accessToken && !scanResult) {
-      handleScan();
+    if (accessToken && !health) {
+      checkWorkspaceHealth();
     }
   }, [accessToken]);
 
@@ -272,6 +343,20 @@ export default function SlideLibrary() {
             <Button
               variant="outline"
               size="sm"
+              onClick={checkWorkspaceHealth}
+              disabled={checkingHealth || !accessToken}
+              className="gap-2"
+            >
+              {checkingHealth ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <HeartPulse className="w-4 h-4" />
+              )}
+              {checkingHealth ? "Checking..." : "Health"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleScan}
               disabled={scanning || !accessToken}
               className="gap-2"
@@ -341,6 +426,120 @@ export default function SlideLibrary() {
                   value={stats.slideTypes}
                 />
               </div>
+            )}
+
+            {/* Workspace Health */}
+            {health && (
+              <Card className={health.healthy ? "border-emerald-200 bg-emerald-50/30" : "border-amber-200 bg-amber-50/30"}>
+                <CardContent className="py-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      {health.healthy ? (
+                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      ) : (
+                        <ShieldAlert className="w-4 h-4 text-amber-600" />
+                      )}
+                      <span className={health.healthy ? "text-emerald-800" : "text-amber-800"}>
+                        Workspace Health
+                      </span>
+                    </h3>
+                    {health.workspace?.isAutoCorrected && (
+                      <Badge className="bg-amber-100 text-amber-700 border-amber-300 text-xs gap-1">
+                        <ArrowUpCircle className="w-3 h-3" />
+                        Auto-corrected
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                    <div className="bg-white rounded p-2.5 border border-slate-200">
+                      <p className="text-[10px] text-slate-500 font-medium">Root Folder</p>
+                      <p className="text-sm font-semibold text-[#1B2A4A] truncate">
+                        {health.workspace?.rootFolderName || "?"}
+                      </p>
+                    </div>
+                    <div className="bg-white rounded p-2.5 border border-slate-200">
+                      <p className="text-[10px] text-slate-500 font-medium">Total Children</p>
+                      <p className="text-sm font-semibold text-[#1B2A4A]">
+                        {health.summary?.totalChildren ?? "?"}
+                      </p>
+                    </div>
+                    <div className="bg-white rounded p-2.5 border border-slate-200">
+                      <p className="text-[10px] text-slate-500 font-medium">Required</p>
+                      <p className={`text-sm font-semibold ${health.summary?.requiredFoldersPresent === 3 ? "text-emerald-700" : "text-amber-700"}`}>
+                        {health.summary?.requiredFoldersPresent ?? 0}/3 present
+                      </p>
+                    </div>
+                    <div className="bg-white rounded p-2.5 border border-slate-200">
+                      <p className="text-[10px] text-slate-500 font-medium">PPTX Files</p>
+                      <p className="text-sm font-semibold text-[#1B2A4A]">
+                        {Object.values(health.pptxFiles || {}).reduce((sum: number, f: any) => sum + (f.count || 0), 0)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Required Folders */}
+                  <div className="space-y-1.5 mb-3">
+                    <p className="text-xs font-medium text-slate-600">Required Folders</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {["01 Generated Proposals", "02 Source Decks", "03 Templates"].map((name) => {
+                        const isPresent = health.requiredFolders?.present?.includes(name);
+                        const count = health.pptxFiles?.[name]?.count;
+                        return (
+                          <Badge
+                            key={name}
+                            className={`text-xs gap-1 ${
+                              isPresent
+                                ? "bg-emerald-100 text-emerald-700 border-emerald-300 border"
+                                : "bg-red-100 text-red-600 border-red-300 border"
+                            }`}
+                            variant="outline"
+                          >
+                            {isPresent ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                            {name.replace(/^\d+ /, "")}
+                            {count !== undefined && count > 0 && (
+                              <span className="text-[10px] opacity-70">({count} PPTX)</span>
+                            )}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Optional Folders */}
+                  {health.optionalFolders?.present && health.optionalFolders.present.length > 0 && (
+                    <div className="space-y-1.5 mb-3">
+                      <p className="text-xs font-medium text-slate-600">Optional Folders</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {health.optionalFolders.present.map((name: string) => (
+                          <Badge key={name} className="text-xs bg-slate-100 text-slate-600 border-slate-200 border" variant="outline">
+                            {name.replace(/^\d+ /, "")}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Diagnostics */}
+                  {health.diagnostics && health.diagnostics.length > 0 && (
+                    <div className="bg-white rounded p-2.5 border border-slate-200">
+                      <p className="text-[10px] font-medium text-slate-500 mb-1">Diagnostics</p>
+                      <div className="space-y-0.5">
+                        {health.diagnostics.map((d: string, i: number) => (
+                          <p key={i} className="text-[11px] text-slate-600 font-mono">{d}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Correction notice */}
+                  {health.workspace?.correctionReason && (
+                    <div className="mt-2 text-[11px] text-amber-600 bg-amber-100 rounded p-2">
+                      {health.workspace.correctionReason}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
 
             {/* Discovered Folders */}

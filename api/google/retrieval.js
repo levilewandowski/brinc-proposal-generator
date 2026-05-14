@@ -274,8 +274,8 @@ function buildSlideIndex(scanResult) {
 /**
  * Save slide index to Google Drive as JSON.
  */
-function saveIndexToDrive(token, index, logs) {
-  return getOrCreateIndexFolder(token).then(function(folderId) {
+function saveIndexToDrive(token, rootId, index, logs) {
+  return getOrCreateIndexFolder(token, rootId).then(function(folderId) {
     // Search for existing index file
     var q = encodeURIComponent("mimeType='application/json' and '" + folderId + "' in parents and name='" + INDEX_FILE_NAME + "' and trashed=false");
     return fetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true", {
@@ -317,8 +317,8 @@ function saveIndexToDrive(token, index, logs) {
 /**
  * Load slide index from Google Drive.
  */
-function loadIndexFromDrive(token, logs) {
-  return getOrCreateIndexFolder(token).then(function(folderId) {
+function loadIndexFromDrive(token, rootId, logs) {
+  return getOrCreateIndexFolder(token, rootId).then(function(folderId) {
     var q = encodeURIComponent("mimeType='application/json' and '" + folderId + "' in parents and name='" + INDEX_FILE_NAME + "' and trashed=false");
     return fetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true", {
       headers: { Authorization: "Bearer " + token }
@@ -341,9 +341,10 @@ function loadIndexFromDrive(token, logs) {
   });
 }
 
-function getOrCreateIndexFolder(token) {
-  // Find 06 Indexes folder under DRIVE_ROOT
-  var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='" + INDEX_FOLDER_NAME + "' and trashed=false");
+function getOrCreateIndexFolder(token, rootId) {
+  rootId = rootId || DRIVE_ROOT;
+  // Find 06 Indexes folder under workspace root
+  var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + rootId + "' in parents and name='" + INDEX_FOLDER_NAME + "' and trashed=false");
   return fetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives", {
     headers: { Authorization: "Bearer " + token }
   }).then(function(r) { return r.json(); }).then(function(search) {
@@ -352,7 +353,7 @@ function getOrCreateIndexFolder(token) {
     return fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: INDEX_FOLDER_NAME, mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_ROOT] }),
+      body: JSON.stringify({ name: INDEX_FOLDER_NAME, mimeType: "application/vnd.google-apps.folder", parents: [rootId] }),
     }).then(function(r) { return r.json(); }).then(function(folder) { return folder.id; });
   });
 }

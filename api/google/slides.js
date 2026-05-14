@@ -4,7 +4,7 @@ const DRIVE_ROOT = process.env.GOOGLE_DRIVE_FOLDER_ID || "";
 //  BRINC PROPOSAL ASSEMBLER
 
 import { orchestrateProposal, polishContent } from "./orchestrator.js";
-//  Self-contained: no external imports for Vercel compat
+import { resolveWorkspaceRoot } from "./workspace.js";
 // ═══════════════════════════════════════════════════════════
 
 // ── Archetype Data ────────────────────────────────────────
@@ -504,9 +504,10 @@ function adaptRetrievedContent(originalText, prospectCompany, offerings, geograp
   return adapted;
 }
 
-function loadIndexFromDrive(token, logs) {
+function loadIndexFromDrive(token, rootId, logs) {
+  rootId = rootId || DRIVE_ROOT;
   // Find 06 Indexes folder
-  var q1 = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='06 Indexes' and trashed=false");
+  var q1 = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + rootId + "' in parents and name='06 Indexes' and trashed=false");
   return fetch("https://www.googleapis.com/drive/v3/files?q=" + q1 + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives", {
     headers: { Authorization: "Bearer " + token }
   }).then(function(r) { return r.json(); }).then(function(search) {
@@ -539,8 +540,9 @@ function loadIndexFromDrive(token, logs) {
 
 // ── DNA Index Loading ─────────────────────────────────────
 
-function loadDNAIndexFromDrive(token, logs) {
-  var q1 = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='06 Indexes' and trashed=false");
+function loadDNAIndexFromDrive(token, rootId, logs) {
+  rootId = rootId || DRIVE_ROOT;
+  var q1 = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + rootId + "' in parents and name='06 Indexes' and trashed=false");
   return fetch("https://www.googleapis.com/drive/v3/files?q=" + q1 + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives", {
     headers: { Authorization: "Bearer " + token }
   }).then(function(r) { return r.json(); }).then(function(search) {
@@ -693,6 +695,9 @@ export default function handler(req, res) {
 
   logs.push("Archetype: " + archetypeKey + " (" + arch.label + ")");
 
+  // ── Resolve workspace root ──
+  var resolvedRootId = DRIVE_ROOT; // fallback to raw env var
+
   // Token refresh
   var tokenPromise = Promise.resolve();
   if (refreshToken) {
@@ -707,12 +712,21 @@ export default function handler(req, res) {
     });
   }
 
-  // Load both indexes in parallel
-  var indexPromise = tokenPromise.then(function() {
-    return loadIndexFromDrive(accessToken, logs);
+  // Resolve workspace and load indexes
+  var workspacePromise = tokenPromise.then(function() {
+    return resolveWorkspaceRoot(accessToken, logs);
   });
-  var dnaPromise = tokenPromise.then(function() {
-    return loadDNAIndexFromDrive(accessToken, logs);
+
+  // Load both indexes in parallel (after workspace resolution)
+  var indexPromise = workspacePromise.then(function(resolved) {
+    if (resolved.rootId) {
+      resolvedRootId = resolved.rootId;
+      logs.push("Workspace: '" + resolved.rootName + "' (autoCorrected=" + resolved.isAutoCorrected + ")");
+    }
+    return loadIndexFromDrive(accessToken, resolvedRootId, logs);
+  });
+  var dnaPromise = workspacePromise.then(function() {
+    return loadDNAIndexFromDrive(accessToken, resolvedRootId, logs);
   });
 
   // ═══════════════════════════════════════════════════════════
@@ -959,24 +973,23 @@ export default function handler(req, res) {
         if (lineageRecords.length > 0) saveLineage(accessToken, lineageRecords, logs).catch(function(){});
 
         var folderPath = "";
-        if (!DRIVE_ROOT) {
+        if (!resolvedRootId) {
           return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined };
         }
         return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?fields=parents&supportsAllDrives=true")
           .then(function(before) {
             var currentParents = before.data.parents || ["root"];
-            var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='01 Generated Proposals' and trashed=false");
+            var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + resolvedRootId + "' in parents and name='01 Generated Proposals' and trashed=false");
             return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,createdTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives")
               .then(function(search) {
                 var found = (search.data.files || []).filter(function(f) { return f.id; });
                 if (found.length > 0) {
-                  // Sort by createdTime ascending (oldest first) to avoid duplicates
                   found.sort(function(a, b) { return (a.createdTime || "").localeCompare(b.createdTime || ""); });
                   logs.push("01 Generated Proposals: " + found.length + " found, using oldest (" + found[0].id.substring(0, 12) + "...)");
                   return found[0].id;
                 }
                 logs.push("01 Generated Proposals: not found, creating");
-                return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", { method: "POST", body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_ROOT] }) }).then(function(c) { return c.data.id; });
+                return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", { method: "POST", body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [resolvedRootId] }) }).then(function(c) { return c.data.id; });
               })
               .then(function(folderId) {
                 if (!folderId) return "";
