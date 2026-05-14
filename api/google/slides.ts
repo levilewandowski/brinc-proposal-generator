@@ -247,85 +247,87 @@ export default function handler(req: any, res: any) {
 
         logs.push("Batch: " + reqs.length + " reqs");
 
-        // 4. Drive folder move
+        // 4. Drive folder move with supportsAllDrives
         let folderPath = "";
 
         if (DRIVE_ROOT) {
           logs.push("Root: " + DRIVE_ROOT.substring(0, 10) + "...");
 
-          const q = encodeURIComponent(
-            "mimeType='application/vnd.google-apps.folder' and '" +
-              DRIVE_ROOT +
-              "' in parents and name='01 Generated Proposals' and trashed=false"
-          );
-
+          // Step A: Get actual current parents
           return fetch(
-            "https://www.googleapis.com/drive/v3/files?q=" +
-              q +
-              "&fields=files(id)",
+            "https://www.googleapis.com/drive/v3/files/" + presId + "?fields=parents&supportsAllDrives=true",
             { headers: { Authorization: "Bearer " + accessToken } }
           )
             .then((r) => r.json())
-            .then((search: any) => {
-              const fid = search.files?.[0]?.id;
-              if (fid) {
-                logs.push("Found folder: " + fid);
-                return fid;
-              }
-              // Create folder
-              return fetch("https://www.googleapis.com/drive/v3/files", {
-                method: "POST",
-                headers: {
-                  Authorization: "Bearer " + accessToken,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  name: "01 Generated Proposals",
-                  mimeType: "application/vnd.google-apps.folder",
-                  parents: [DRIVE_ROOT],
-                }),
-              })
+            .then((before: any) => {
+              const currentParents = before.parents || ["root"];
+              logs.push("Current parents: " + JSON.stringify(currentParents));
+
+              // Step B: Find or create target folder
+              const q = encodeURIComponent(
+                "mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='01 Generated Proposals' and trashed=false"
+              );
+              return fetch(
+                "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,name)&supportsAllDrives=true",
+                { headers: { Authorization: "Bearer " + accessToken } }
+              )
                 .then((r) => r.json())
-                .then((d: any) => {
-                  logs.push("Created folder: " + d.id);
-                  return d.id;
+                .then((search: any) => {
+                  const existing = search.files?.[0];
+                  if (existing) {
+                    logs.push("Found folder: " + existing.id + " (" + existing.name + ")");
+                    return { id: existing.id, currentParents };
+                  }
+                  // Create
+                  return fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
+                    method: "POST",
+                    headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      name: "01 Generated Proposals",
+                      mimeType: "application/vnd.google-apps.folder",
+                      parents: [DRIVE_ROOT],
+                    }),
+                  })
+                    .then((r) => r.json())
+                    .then((d: any) => {
+                      logs.push("Created folder: " + d.id);
+                      return { id: d.id, currentParents };
+                    });
                 });
             })
-            .then((folderId) => {
+            .then(({ id: folderId, currentParents }: any) => {
               if (!folderId) {
                 logs.push("No folder ID");
                 return presId;
               }
 
+              // Step C: Move file (remove actual parents, add target)
+              const removeParents = currentParents.join(",");
+              logs.push("Moving: remove=" + removeParents + ", add=" + folderId);
+
               return fetch(
-                "https://www.googleapis.com/drive/v3/files/" +
-                  presId +
-                  "?addParents=" +
-                  folderId +
-                  "&removeParents=root",
-                {
-                  method: "PATCH",
-                  headers: { Authorization: "Bearer " + accessToken },
-                }
+                "https://www.googleapis.com/drive/v3/files/" + presId +
+                  "?addParents=" + folderId +
+                  "&removeParents=" + removeParents +
+                  "&supportsAllDrives=true&fields=id,parents",
+                { method: "PATCH", headers: { Authorization: "Bearer " + accessToken } }
               )
-                .then((r) => {
-                  logs.push("Move HTTP: " + r.status);
-                  return r.ok;
-                })
-                .then(() => {
-                  return fetch(
-                    "https://www.googleapis.com/drive/v3/files/" +
-                      presId +
-                      "?fields=parents",
-                    { headers: { Authorization: "Bearer " + accessToken } }
-                  )
-                    .then((r) => r.json())
-                    .then((after: any) => {
-                      const inTarget = (after.parents || []).includes(folderId);
-                      logs.push("In folder: " + inTarget);
-                      if (inTarget) folderPath = "01 Generated Proposals";
-                      return presId;
-                    });
+                .then((r) => r.text().then((t) => ({ ok: r.ok, status: r.status, data: t ? JSON.parse(t) : {} })))
+                .then((moveResult) => {
+                  logs.push("Move response: HTTP " + moveResult.status);
+                  if (!moveResult.ok) {
+                    logs.push("Move error: " + JSON.stringify(moveResult.data));
+                    return presId;
+                  }
+
+                  // Step D: Verify
+                  const finalParents = moveResult.data.parents || [];
+                  const inTarget = finalParents.includes(folderId);
+                  logs.push("Final parents: " + JSON.stringify(finalParents));
+                  logs.push("In target folder: " + inTarget);
+
+                  if (inTarget) folderPath = "01 Generated Proposals";
+                  return presId;
                 });
             })
             .then(() => ({
