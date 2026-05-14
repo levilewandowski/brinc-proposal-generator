@@ -195,7 +195,7 @@ export default function Home() {
         .replace(/=+$/, "");
 
       const scopes = encodeURIComponent(
-        "openid email profile https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/presentations"
+        "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/presentations"
       );
 
       const url =
