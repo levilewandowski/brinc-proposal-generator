@@ -192,22 +192,39 @@ export default function handler(req, res) {
           + " totalSlides=" + scanResult.totalSlidesScanned);
 
         // Build per-file status from scanResult
+        var processingLog = scanResult.processingLog || [];
+        function getFileStage(name) {
+          var entries = processingLog.filter(function(e) { return e.fileName === name; });
+          var lastFail = entries.slice().reverse().find(function(e) { return e.status === "FAIL"; });
+          var lastOk = entries.slice().reverse().find(function(e) { return e.status === "OK"; });
+          return {
+            stage: lastFail ? lastFail.stage : (lastOk ? lastOk.stage : "DISCOVERED"),
+            error: lastFail ? lastFail.detail : "",
+            allStages: entries.map(function(e) { return e.stage + ":" + e.status; }),
+          };
+        }
+
         var fileStatuses = (scanResult.deckProfiles || []).map(function(dp) {
+          var st = getFileStage(dp.fileName);
           return {
             name: dp.fileName,
             folder: dp.folder,
             presentationId: dp.presentationId,
+            mimeType: dp.mimeType || "",
             status: "indexed",
+            stage: st.stage,
             slideCount: dp.slideCount,
             dnaCount: (dp.slideDNA || []).length,
             archetype: dp.archetype,
             cloneable: true,
+            error: "",
           };
         });
         var indexedNames = fileStatuses.map(function(s) { return s.name; });
         filesToScan.forEach(function(f) {
           if (indexedNames.indexOf(f.name) < 0) {
-            fileStatuses.push({ name: f.name, folder: f.folder, status: "failed", slideCount: 0, dnaCount: 0, cloneable: false });
+            var st = getFileStage(f.name);
+            fileStatuses.push({ name: f.name, folder: f.folder, mimeType: f.mimeType || "", presentationId: "", status: "failed", stage: st.stage, slideCount: 0, dnaCount: 0, archetype: "", cloneable: false, error: st.error });
           }
         });
 
@@ -244,8 +261,9 @@ export default function handler(req, res) {
               rawRootName: workspaceMeta.rawRootName,
               rawRootId: workspaceMeta.rawRootId,
             },
-            fileList: allFiles.map(function(f) { return { folder: f.folder, name: f.name, modifiedTime: f.modifiedTime }; }),
+            fileList: allFiles.map(function(f) { return { folder: f.folder, name: f.name, mimeType: f.mimeType, modifiedTime: f.modifiedTime }; }),
             fileStatuses: fileStatuses,
+            processingLog: processingLog,
             ...scanResult,
             slideIndex: { slideCount: slideIndex.slides.length, deckCount: slideIndex.decks.length, builtAt: slideIndex.builtAt },
             dnaIndex: { slideCount: dnaIndex.slides.length, componentCounts: dnaIndex.componentCounts, builtAt: dnaIndex.builtAt },
@@ -561,11 +579,23 @@ function deepScanFiles(token, files, templateLibId, logs) {
   var allSlideTypes = [];
   var allSlideLayouts = [];
   var contentSamples = {};
-  var archetypeCounts = {};
+  var processingLog = [];
+
+  function logFileEvent(fileName, stage, status, detail) {
+    var entry = {
+      fileName: fileName,
+      stage: stage,
+      status: status,
+      detail: detail || "",
+      timestamp: new Date().toISOString(),
+    };
+    processingLog.push(entry);
+    logs.push("[" + fileName + "] " + stage + ": " + status + (detail ? " — " + detail : ""));
+  }
 
   function scanFile(index) {
     if (index >= files.length) {
-      logs.push("DEEPSCAN: recursion complete — deckProfiles=" + deckProfiles.length + " totalSlides=" + allSlideTypes.length);
+      logs.push("DEEPSCAN: complete — deckProfiles=" + deckProfiles.length + " totalSlides=" + allSlideTypes.length);
       var topPhrases = extractRecurringPhrases(allSlideTexts, 2);
       var archetypeBreakdown = {};
       deckProfiles.forEach(function(d) { if (d.archetype) archetypeBreakdown[d.archetype] = (archetypeBreakdown[d.archetype] || 0) + 1; });
@@ -577,17 +607,25 @@ function deepScanFiles(token, files, templateLibId, logs) {
         deckProfiles: deckProfiles, archetypeBreakdown: archetypeBreakdown,
         slideTypeCounts: slideTypeCounts, layoutPreferences: layoutCounts,
         topPhrases: topPhrases.slice(0, 20), contentSamples: contentSamples,
-        totalSlidesScanned: allSlideTypes.length,
+        totalSlidesScanned: allSlideTypes.length, processingLog: processingLog,
       });
     }
 
     var file = files[index];
-    var isNativeSlides = file.mimeType === "application/vnd.google-apps.presentation";
+    logFileEvent(file.name, "DISCOVERED", "OK", "mimeType=" + (file.mimeType || "?") + " id=" + file.id.substring(0, 12) + "...");
 
-    // For native Google Slides, read directly. For .pptx, copy to Google Slides first.
+    // ── STAGE: ACCESS_VERIFIED ──
+    logFileEvent(file.name, "ACCESS_VERIFIED", "START", "checking file access");
+
+    var isNativeSlides = file.mimeType === "application/vnd.google-apps.presentation";
+    var isPptx = file.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+                 (file.name && file.name.toLowerCase().endsWith(".pptx"));
+
+    logFileEvent(file.name, "ACCESS_VERIFIED", "OK", "native=" + isNativeSlides + " pptx=" + isPptx);
+
     if (isNativeSlides) {
-      logs.push("SCAN: Reading native Google Slides: " + file.name + " (" + file.id.substring(0, 12) + "...)");
-      return readAndExtractSlides(token, file.id, file, logs).then(function(profile) {
+      // ── NATIVE SLIDES PATH ──
+      return processNativeSlides(token, file, logs, logFileEvent).then(function(profile) {
         if (profile) {
           deckProfiles.push(profile);
           profile.slides.forEach(function(s) { allSlideTypes.push(s.slideType); allSlideLayouts.push(s.layout); allSlideTexts.push(s.text); });
@@ -595,39 +633,20 @@ function deepScanFiles(token, files, templateLibId, logs) {
             if (!contentSamples[k]) contentSamples[k] = [];
             contentSamples[k] = contentSamples[k].concat(profile.contentSamples[k]);
           });
-          logs.push("  PIPELINE native: deckProfiles=" + deckProfiles.length + " totalSlides=" + allSlideTypes.length);
+          logFileEvent(file.name, "COMPLETE", "OK", profile.slideCount + " slides indexed");
         } else {
-          logs.push("  PIPELINE native: profile is null for " + file.name);
+          logFileEvent(file.name, "COMPLETE", "FAIL", "profile is null");
         }
         return scanFile(index + 1);
       }).catch(function(err) {
-        logs.push("  Error reading " + file.name + ": " + (err.message || String(err)));
+        logFileEvent(file.name, "COMPLETE", "FAIL", "exception: " + (err.message || String(err)));
         return scanFile(index + 1);
       });
     }
 
-    logs.push("SCAN: Copying .pptx to Google Slides: " + file.name);
-    return gapi(token, "https://www.googleapis.com/drive/v3/files/" + file.id + "/copy", {
-      method: "POST",
-      body: JSON.stringify({ name: file.name, mimeType: "application/vnd.google-apps.presentation" }),
-    }).then(function(copied) {
-      if (!copied.ok || !copied.data.id) {
-        logs.push("  Copy FAILED: status=" + copied.status);
-        return scanFile(index + 1);
-      }
-      var presId = copied.data.id;
-      logs.push("  Copy OK: " + presId.substring(0, 12) + "...");
-
-      var movePromise = Promise.resolve(presId);
-      if (templateLibId) {
-        movePromise = gapi(token, "https://www.googleapis.com/drive/v3/files/" + presId + "?addParents=" + templateLibId + "&supportsAllDrives=true", { method: "PATCH" })
-          .then(function() { logs.push("  Moved to Template Library"); return presId; })
-          .catch(function() { return presId; });
-      }
-
-      return movePromise.then(function() {
-        return readAndExtractSlides(token, presId, file, logs);
-      }).then(function(profile) {
+    if (isPptx) {
+      // ── PPTX IMPORT PATH ──
+      return processPptxImport(token, file, templateLibId, logs, logFileEvent).then(function(profile) {
         if (profile) {
           deckProfiles.push(profile);
           profile.slides.forEach(function(s) { allSlideTypes.push(s.slideType); allSlideLayouts.push(s.layout); allSlideTexts.push(s.text); });
@@ -635,22 +654,107 @@ function deepScanFiles(token, files, templateLibId, logs) {
             if (!contentSamples[k]) contentSamples[k] = [];
             contentSamples[k] = contentSamples[k].concat(profile.contentSamples[k]);
           });
-          logs.push("  PIPELINE: deckProfiles=" + deckProfiles.length + " totalSlides=" + allSlideTypes.length);
+          logFileEvent(file.name, "COMPLETE", "OK", profile.slideCount + " slides indexed");
         } else {
-          logs.push("  PIPELINE: profile is null — extraction failed for " + file.name);
+          logFileEvent(file.name, "COMPLETE", "FAIL", "profile is null");
         }
         return scanFile(index + 1);
       }).catch(function(err) {
-        logs.push("  Error scanning " + file.name + ": " + (err.message || String(err)));
+        logFileEvent(file.name, "COMPLETE", "FAIL", "exception: " + (err.message || String(err)));
         return scanFile(index + 1);
       });
-    }).catch(function(err) {
-      logs.push("  Error copying " + file.name + ": " + (err.message || String(err)));
-      return scanFile(index + 1);
-    });
+    }
+
+    // Unknown type
+    logFileEvent(file.name, "ACCESS_VERIFIED", "FAIL", "Unknown mimeType: " + (file.mimeType || "?"));
+    return scanFile(index + 1);
   }
 
   return scanFile(0);
+}
+
+// ── Process Native Google Slides ──────────────────────────
+
+function processNativeSlides(token, file, logs, logFileEvent) {
+  logFileEvent(file.name, "IMPORT_STARTED", "SKIP", "Native Google Slides — no conversion needed");
+  logFileEvent(file.name, "IMPORT_COMPLETE", "OK", "using fileId=" + file.id.substring(0, 12) + "...");
+
+  return readAndExtractSlides(token, file.id, file, logs).then(function(profile) {
+    if (profile) {
+      logFileEvent(file.name, "SLIDES_EXTRACTED", "OK", profile.slideCount + " slides");
+      logFileEvent(file.name, "DNA_EXTRACTED", "OK", (profile.slideDNA || []).length + " DNA records");
+      logFileEvent(file.name, "INDEXED", "OK", profile.slides.length + " slide records");
+    } else {
+      logFileEvent(file.name, "SLIDES_EXTRACTED", "FAIL", "readAndExtractSlides returned null");
+    }
+    return profile;
+  }).catch(function(err) {
+    logFileEvent(file.name, "SLIDES_EXTRACTED", "FAIL", err.message || String(err));
+    return null;
+  });
+}
+
+// ── Process PPTX Import ───────────────────────────────────
+
+function processPptxImport(token, file, templateLibId, logs, logFileEvent) {
+  logFileEvent(file.name, "IMPORT_STARTED", "START", "Copying .pptx → Google Slides");
+
+  var copyBody = JSON.stringify({ name: file.name, mimeType: "application/vnd.google-apps.presentation" });
+  logFileEvent(file.name, "IMPORT_STARTED", "REQUEST", "POST /drive/v3/files/" + file.id + "/copy body=" + copyBody);
+
+  return gapi(token, "https://www.googleapis.com/drive/v3/files/" + file.id + "/copy", {
+    method: "POST",
+    body: copyBody,
+  }).then(function(copied) {
+    if (!copied.ok) {
+      var errDetail = copied.data.error ? (copied.data.error.message + " [code=" + copied.data.error.code + "]") : ("HTTP " + copied.status + ": " + copied.body);
+      logFileEvent(file.name, "IMPORT_COMPLETE", "FAIL", errDetail);
+      logFileEvent(file.name, "PRESENTATION_OPENED", "FAIL", "No presentationId — conversion failed");
+      return null;
+    }
+
+    if (!copied.data.id) {
+      logFileEvent(file.name, "IMPORT_COMPLETE", "FAIL", "Response OK but no id field. body=" + JSON.stringify(copied.data).substring(0, 200));
+      return null;
+    }
+
+    var presId = copied.data.id;
+    logFileEvent(file.name, "IMPORT_COMPLETE", "OK", "presentationId=" + presId);
+
+    // Move to Template Library (never delete)
+    var movePromise = Promise.resolve(presId);
+    if (templateLibId) {
+      movePromise = gapi(token, "https://www.googleapis.com/drive/v3/files/" + presId + "?addParents=" + templateLibId + "&supportsAllDrives=true", { method: "PATCH" })
+        .then(function(m) {
+          logFileEvent(file.name, "PERSIST", m.ok ? "OK" : "WARN", "status=" + m.status);
+          return presId;
+        })
+        .catch(function(err) {
+          logFileEvent(file.name, "PERSIST", "WARN", err.message || String(err));
+          return presId;
+        });
+    }
+
+    return movePromise.then(function() {
+      logFileEvent(file.name, "PRESENTATION_OPENED", "OK", "opening " + presId.substring(0, 12) + "...");
+      return readAndExtractSlides(token, presId, file, logs);
+    }).then(function(profile) {
+      if (profile) {
+        logFileEvent(file.name, "SLIDES_EXTRACTED", "OK", profile.slideCount + " slides");
+        logFileEvent(file.name, "DNA_EXTRACTED", "OK", (profile.slideDNA || []).length + " DNA records");
+        logFileEvent(file.name, "INDEXED", "OK", profile.slides.length + " slide records");
+      } else {
+        logFileEvent(file.name, "SLIDES_EXTRACTED", "FAIL", "readAndExtractSlides returned null");
+      }
+      return profile;
+    }).catch(function(err) {
+      logFileEvent(file.name, "PRESENTATION_OPENED", "FAIL", "Slides API error: " + (err.message || String(err)));
+      return null;
+    });
+  }).catch(function(err) {
+    logFileEvent(file.name, "IMPORT_COMPLETE", "FAIL", "Copy exception: " + (err.message || String(err)));
+    return null;
+  });
 }
 
 // ── Save DNA Index ────────────────────────────────────────

@@ -28,6 +28,9 @@ import {
   ShieldCheck,
   ShieldAlert,
   ArrowUpCircle,
+  ChevronDown,
+  ChevronRight,
+  Terminal,
 } from "lucide-react";
 
 interface SlideIndexEntry {
@@ -69,11 +72,22 @@ interface FileStatus {
   name: string;
   folder: string;
   presentationId?: string;
+  mimeType?: string;
   status: string;
+  stage: string;
   slideCount: number;
   dnaCount: number;
   archetype?: string;
   cloneable: boolean;
+  error?: string;
+}
+
+interface ProcessingLogEntry {
+  fileName: string;
+  stage: string;
+  status: string;
+  detail: string;
+  timestamp: string;
 }
 
 interface DeckProfile {
@@ -446,53 +460,13 @@ export default function SlideLibrary() {
               <Card className="border-slate-200">
                 <CardContent className="py-4">
                   <h3 className="text-sm font-semibold text-[#1B2A4A] mb-3 flex items-center gap-2">
-                    <FileText className="w-4 h-4" />
-                    File Processing Status ({scanResult.fileStatuses.length})
+                    <Terminal className="w-4 h-4" />
+                    File Processing Pipeline ({scanResult.fileStatuses.length})
                   </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-slate-500 border-b border-slate-200">
-                          <th className="text-left py-1.5 pr-3">File</th>
-                          <th className="text-left py-1.5 pr-3">Status</th>
-                          <th className="text-right py-1.5 pr-3">Slides</th>
-                          <th className="text-right py-1.5 pr-3">DNA</th>
-                          <th className="text-left py-1.5">Presentation ID</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {scanResult.fileStatuses.map((fs, i) => (
-                          <tr key={i} className="border-b border-slate-100">
-                            <td className="py-1.5 pr-3">
-                              <div className="flex items-center gap-1.5">
-                                {fs.status === "indexed" ? (
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                                ) : (
-                                  <AlertTriangle className="w-3 h-3 text-red-400" />
-                                )}
-                                <span className="font-medium text-slate-700">{fs.name}</span>
-                              </div>
-                            </td>
-                            <td className="py-1.5 pr-3">
-                              <Badge className={`text-[10px] ${
-                                fs.status === "indexed"
-                                  ? "bg-emerald-100 text-emerald-700 border-emerald-300"
-                                  : "bg-red-100 text-red-600 border-red-300"
-                              }`} variant="outline">
-                                {fs.status}
-                              </Badge>
-                            </td>
-                            <td className="text-right py-1.5 pr-3 text-slate-600">{fs.slideCount}</td>
-                            <td className="text-right py-1.5 pr-3 text-slate-600">{fs.dnaCount}</td>
-                            <td className="py-1.5 font-mono text-[10px] text-slate-400">
-                              {fs.presentationId
-                                ? fs.presentationId.substring(0, 16) + "..."
-                                : "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="space-y-1">
+                    {scanResult.fileStatuses.map((fs, i) => (
+                      <FileProcessingRow key={i} fs={fs} logEntries={scanResult.processingLog?.filter((e: ProcessingLogEntry) => e.fileName === fs.name) || []} />
+                    ))}
                   </div>
                 </CardContent>
               </Card>
@@ -866,6 +840,96 @@ export default function SlideLibrary() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function FileProcessingRow({ fs, logEntries }: { fs: FileStatus; logEntries: ProcessingLogEntry[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="border border-slate-200 rounded overflow-hidden">
+      {/* Header row */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 transition-colors"
+      >
+        {expanded ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+        {fs.status === "indexed" ? (
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+        ) : (
+          <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+        )}
+        <span className="text-xs font-medium text-slate-700 truncate flex-1">{fs.name}</span>
+        <Badge className={`text-[10px] shrink-0 ${
+          fs.status === "indexed"
+            ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+            : "bg-red-100 text-red-600 border-red-300"
+        }`} variant="outline">
+          {fs.status}
+        </Badge>
+        <span className="text-[10px] text-slate-400 shrink-0 w-32 text-right">{fs.stage}</span>
+        <span className="text-[10px] text-slate-500 shrink-0 w-16 text-right">{fs.slideCount}sl</span>
+        <span className="text-[10px] text-slate-500 shrink-0 w-12 text-right">{fs.dnaCount}dna</span>
+      </button>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div className="px-3 py-2 bg-slate-50 border-t border-slate-100 space-y-2">
+          {/* File details */}
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div>
+              <span className="text-slate-400">MimeType:</span>{" "}
+              <span className="font-mono text-slate-600">{fs.mimeType || "?"}</span>
+            </div>
+            <div>
+              <span className="text-slate-400">Presentation ID:</span>{" "}
+              <span className="font-mono text-slate-600">{fs.presentationId || "—"}</span>
+            </div>
+            <div>
+              <span className="text-slate-400">Cloneable:</span>{" "}
+              <span className={fs.cloneable ? "text-emerald-600" : "text-slate-400"}>{fs.cloneable ? "Yes" : "No"}</span>
+            </div>
+            <div>
+              <span className="text-slate-400">Archetype:</span>{" "}
+              <span className="text-slate-600">{fs.archetype || "—"}</span>
+            </div>
+          </div>
+
+          {/* Error */}
+          {fs.error && (
+            <div className="bg-red-50 border border-red-200 rounded p-2">
+              <p className="text-[10px] font-semibold text-red-600 mb-0.5">Error at stage: {fs.stage}</p>
+              <p className="text-[11px] text-red-700 font-mono">{fs.error}</p>
+            </div>
+          )}
+
+          {/* Pipeline stages */}
+          {logEntries.length > 0 && (
+            <div className="space-y-0.5">
+              <p className="text-[10px] font-semibold text-slate-500">Pipeline Stages</p>
+              {logEntries.map((entry, j) => (
+                <div key={j} className="flex items-center gap-2 text-[10px]">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    entry.status === "OK" ? "bg-emerald-400" :
+                    entry.status === "FAIL" ? "bg-red-400" :
+                    entry.status === "START" ? "bg-blue-400" :
+                    entry.status === "SKIP" ? "bg-amber-400" :
+                    "bg-slate-300"
+                  }`} />
+                  <span className="text-slate-500 w-32">{entry.stage}</span>
+                  <span className={`${
+                    entry.status === "OK" ? "text-emerald-600" :
+                    entry.status === "FAIL" ? "text-red-500" :
+                    "text-slate-500"
+                  }`}>{entry.status}</span>
+                  <span className="text-slate-400 truncate flex-1">{entry.detail}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
