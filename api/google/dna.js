@@ -10,7 +10,7 @@
  * Extract full DNA from a Google Slide object (from Slides API response).
  * Returns structured element data + layout fingerprint.
  */
-function extractSlideDNA(slide, slideType, archetype, sourceDeck, modifiedTime) {
+function extractSlideDNA(slide, slideType, archetype, sourceDeck, modifiedTime, sourcePresentationId) {
   var elements = [];
   var layoutFingerprint = {
     elementCount: 0,
@@ -94,6 +94,7 @@ function extractSlideDNA(slide, slideType, archetype, sourceDeck, modifiedTime) 
     slideType: slideType,
     archetype: archetype,
     sourceDeck: sourceDeck,
+    sourcePresentationId: sourcePresentationId || "",
     modifiedTime: modifiedTime,
     elements: elements,
     layoutFingerprint: layoutFingerprint,

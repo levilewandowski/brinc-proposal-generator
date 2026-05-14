@@ -6,7 +6,7 @@ import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
 import { toast, Toaster } from "sonner";
 import {
-  ArrowLeft, FileText, ExternalLink, Sparkles, User, Building2, Mail, Linkedin, Loader2, CheckCircle, Library,
+  ArrowLeft, FileText, ExternalLink, Sparkles, User, Building2, Mail, Linkedin, Loader2, CheckCircle, Library, Bug, CopyCheck, AlertTriangle,
 } from "lucide-react";
 
 export default function ProposalView() {
@@ -19,6 +19,9 @@ export default function ProposalView() {
   const [creating, setCreating] = useState(false);
   const [slidesUrl, setSlidesUrl] = useState<string | null>(null);
   const [assemblyMap, setAssemblyMap] = useState<any[]>([]);
+  const [debugReport, setDebugReport] = useState<any[] | null>(null);
+  const [cloneErrors, setCloneErrors] = useState<any[] | null>(null);
+  const [debugMode, setDebugMode] = useState(false);
 
   if (!proposal) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -73,6 +76,7 @@ export default function ProposalView() {
           archetype: proposal.archetype || "accelerator",
           geography: proposal.geography || "UAE",
           patterns,
+          debug: debugMode,
         }),
       });
 
@@ -83,10 +87,14 @@ export default function ProposalView() {
 
       setSlidesUrl(data.webViewLink);
       setAssemblyMap(data.sectionMap || []);
+      setDebugReport(data.debugReport || null);
+      setCloneErrors(data.cloneErrors || null);
       const retrieved = (data.sectionMap || []).filter((s: any) => s.source === "retrieved").length;
       const inspired = (data.sectionMap || []).filter((s: any) => s.source === "inspired").length;
       const generated = (data.sectionMap || []).filter((s: any) => s.source === "generated").length;
-      toast.success(`Slides: ${data.slideCount} (${retrieved} retrieved, ${inspired} inspired, ${generated} generated)`);
+      const cloned = (data.sectionMap || []).filter((s: any) => s.source === "cloned").length;
+      const cloneErrCount = (data.cloneErrors || []).length;
+      toast.success(`Slides: ${data.slideCount} (${cloned} cloned, ${retrieved} retrieved, ${inspired} inspired, ${generated} generated)${cloneErrCount > 0 ? ` · ${cloneErrCount} clone errors` : ""}`);
     } catch (err: any) {
       console.error("[Create Slides] Error:", err);
       toast.error("Failed to create slides: " + (err.message || String(err)));
@@ -125,6 +133,20 @@ export default function ProposalView() {
             {proposal.suggestedAngle && <Card className="border-slate-200 shadow-sm"><CardHeader className="pb-3"><CardTitle className="text-sm text-[#1B2A4A]">Suggested Angle</CardTitle></CardHeader><CardContent><p className="text-sm text-slate-600 whitespace-pre-wrap">{proposal.suggestedAngle}</p></CardContent></Card>}
             {proposal.otherNotes && <Card className="border-slate-200 shadow-sm"><CardHeader className="pb-3"><CardTitle className="text-sm text-[#1B2A4A]">Other Notes</CardTitle></CardHeader><CardContent><p className="text-sm text-slate-600 whitespace-pre-wrap">{proposal.otherNotes}</p></CardContent></Card>}
 
+            {/* Debug Toggle */}
+            <div className="flex items-center justify-between px-1">
+              <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={debugMode}
+                  onChange={(e) => setDebugMode(e.target.checked)}
+                  className="rounded border-slate-300"
+                />
+                <Bug className="w-3 h-3" />
+                Debug mode (shows retrieval diagnostics)
+              </label>
+            </div>
+
             {/* Create Slides Button */}
             <Card className="border-[#1B2A4A]/20 bg-[#1B2A4A]/5">
               <CardContent className="py-4">
@@ -135,7 +157,7 @@ export default function ProposalView() {
                     disabled={creating || !accessToken}
                   >
                     {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                    {creating ? "Creating Slides..." : accessToken ? "Create Google Slides" : "Connect Google to Create Slides"}
+                    {creating ? "Creating Slides..." : accessToken ? `Create Google Slides${debugMode ? " (Debug)" : ""}` : "Connect Google to Create Slides"}
                   </Button>
                 ) : (
                   <div className="space-y-3">
@@ -158,7 +180,10 @@ export default function ProposalView() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm text-[#1B2A4A]">Assembly Breakdown</CardTitle>
-                    <div className="flex gap-2 text-xs">
+                    <div className="flex gap-2 text-xs flex-wrap">
+                      <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                        {assemblyMap.filter(s => s.source === "cloned").length} Cloned
+                      </Badge>
                       <Badge className="bg-green-50 text-green-700 border-green-200">
                         {assemblyMap.filter(s => s.source === "retrieved").length} Retrieved
                       </Badge>
@@ -176,17 +201,20 @@ export default function ProposalView() {
                     {assemblyMap.map((sec: any, i: number) => (
                       <div key={i} className="flex items-center gap-3 text-sm py-1.5 px-2 rounded hover:bg-slate-50">
                         <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
+                          sec.source === "cloned" ? "bg-emerald-600 text-white" :
                           sec.source === "retrieved" ? "bg-green-500 text-white" :
                           sec.source === "inspired" ? "bg-amber-500 text-white" :
                           "bg-slate-300 text-slate-600"
                         }`}>{i + 1}</span>
                         <span className="flex-1 font-medium text-slate-700">{sec.label || sec.type}</span>
+                        <span className="text-[10px] text-slate-400">{sec.class || ""}</span>
                         <Badge variant="outline" className={`text-[10px] capitalize ${
+                          sec.source === "cloned" ? "border-emerald-200 text-emerald-700 bg-emerald-50" :
                           sec.source === "retrieved" ? "border-green-200 text-green-600 bg-green-50" :
                           sec.source === "inspired" ? "border-amber-200 text-amber-600 bg-amber-50" :
                           "border-slate-200 text-slate-500 bg-slate-50"
                         }`}>
-                          {sec.source === "retrieved" ? "R" : sec.source === "inspired" ? "I" : "G"}
+                          {sec.source === "cloned" ? "C" : sec.source === "retrieved" ? "R" : sec.source === "inspired" ? "I" : "G"}
                           {sec.score > 0 ? ` ${sec.score}` : ""}
                         </Badge>
                       </div>
@@ -195,6 +223,102 @@ export default function ProposalView() {
                 </CardContent>
               </Card>
             )}
+
+            {/* Clone Errors */}
+            {cloneErrors && cloneErrors.length > 0 && (
+              <Card className="border-red-200 bg-red-50 shadow-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm text-red-700 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    Clone Errors ({cloneErrors.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {cloneErrors.map((err: any, i: number) => (
+                      <div key={i} className="text-xs text-red-600 font-mono bg-red-100 rounded p-2">
+                        <div>Slide: {err.slideId}</div>
+                        <div>Source: {err.sourceId}</div>
+                        <div>Error: {err.error}</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Debug Report */}
+            {debugReport && debugReport.length > 0 && (
+              <Card className="border-slate-200 shadow-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm text-[#1B2A4A] flex items-center gap-2">
+                    <Bug className="w-4 h-4" />
+                    Retrieval Debug Report ({debugReport.length} entries)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3 max-h-96 overflow-auto">
+                    {debugReport.map((entry: any, i: number) => (
+                      <div key={i} className="text-xs border border-slate-200 rounded p-2.5 bg-slate-50">
+                        {/* Header */}
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="font-bold text-slate-700">#{entry.slideNumber}</span>
+                          <Badge className={`text-[10px] ${
+                            entry.mode === "CLONE" ? "bg-emerald-600 text-white" :
+                            entry.mode === "RETRIEVE" ? "bg-green-500 text-white" :
+                            entry.mode === "INSPIRE" ? "bg-amber-500 text-white" :
+                            entry.mode === "CANONICAL" ? "bg-purple-500 text-white" :
+                            "bg-slate-400 text-white"
+                          }`}>
+                            {entry.mode || "GENERATE"}
+                          </Badge>
+                          <span className="text-slate-500">{entry.targetLabel || entry.type}</span>
+                          {entry.cloneAttempted && (
+                            <span className={`ml-auto ${entry.cloneSuccess ? "text-emerald-600" : "text-red-500"}`}>
+                              {entry.cloneSuccess ? "✓ Cloned" : "✗ Clone Failed"}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Candidates */}
+                        {entry.topCandidates && entry.topCandidates.length > 0 && (
+                          <div className="space-y-1 mb-1.5">
+                            <p className="text-slate-500 font-medium">Top Candidates:</p>
+                            {entry.topCandidates.map((c: any, j: number) => (
+                              <div key={j} className="flex items-center gap-2 pl-2 border-l-2 border-slate-300">
+                                <span className={`font-bold ${j === 0 ? "text-emerald-600" : "text-slate-500"}`}>
+                                  {c.score}
+                                </span>
+                                <span className="text-slate-600 truncate flex-1">{c.sourceDeck || "?"}</span>
+                                <span className="text-slate-400">
+                                  {c.sourcePresentationId ? "✓ ID" : "✗ No ID"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Fallback reason */}
+                        {entry.fallbackReason && (
+                          <p className="text-amber-600">{entry.fallbackReason}</p>
+                        )}
+
+                        {/* Clone error */}
+                        {entry.cloneError && (
+                          <p className="text-red-500">Clone error: {entry.cloneError}</p>
+                        )}
+
+                        {/* Mode reason */}
+                        {entry.reason && (
+                          <p className="text-slate-400">{entry.reason}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <Card className="border-slate-200 shadow-sm"><CardHeader className="pb-3 flex justify-between"><CardTitle className="text-sm">Deck Preview</CardTitle></CardHeader>
               <CardContent>
                 <div className="space-y-3">

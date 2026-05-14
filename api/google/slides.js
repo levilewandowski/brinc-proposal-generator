@@ -684,8 +684,10 @@ export default function handler(req, res) {
   var geo = body.geography || "";
   var prospectName = body.prospectName || "";
   var otherNotes = body.otherNotes || "";
+  var debug = body.debug === true;
 
   var logs = [];
+  if (debug) logs.push("=== DEBUG MODE ===");
   var title = prospectCompany + " x Brinc";
   var arch = ARCHETYPES[archetypeKey] || ARCHETYPES.accelerator;
 
@@ -744,6 +746,7 @@ export default function handler(req, res) {
 
     var lineageRecords = [];
     var lineageInputs = { archetype: archetypeKey, prospectCompany: prospectCompany, offerings: offerings, geography: geo };
+    var debugReport = debug ? [] : null;
 
     // ── STEP 2: Create presentation ──
     return gapi(accessToken, "https://slides.googleapis.com/v1/presentations", {
@@ -766,6 +769,7 @@ export default function handler(req, res) {
       allReqs = allReqs.concat(coverReqs);
       sectionMap.push({ type: "cover", label: "Cover", source: "generated", slideIndex: slideIdx, class: "A" });
       logs.push("  [G] cover");
+      if (debug) debugReport.push({ slideNumber: slideIdx, type: "cover", mode: "GENERATE", reason: "Cover is always generated", query: null, candidates: [], score: 0 });
 
       // ── STEP 4: CLASS A — Dynamic Strategic ──
       logs.push("--- CLASS A ---");
@@ -773,23 +777,101 @@ export default function handler(req, res) {
         var sid = "s" + now + "_" + slideIdx;
         slideIdx++;
 
+        // Build query and retrieve candidates
         var query = { slideType: planSlide.type, archetype: archetypeKey, keywords: SLIDE_TYPE_SIGNALS[planSlide.type] || [], geography: geo, offerings: offerings };
-        var retrieval = retrieveSlides(slideIndex, query, 3);
+        var retrieval = retrieveSlides(slideIndex, query, 5);
         var hasMatch = retrieval.hasIndex && retrieval.candidates.length > 0;
-        var best = hasMatch ? retrieval.candidates[0] : null;
+        var candidates = retrieval.hasIndex ? retrieval.candidates : [];
+        var best = candidates.length > 0 ? candidates[0] : null;
         var score = best ? best.score : 0;
 
+        // Score thresholds
+        var CLONE_THRESHOLD = 70;
+        var RETRIEVE_THRESHOLD = 55;
+        var INSPIRE_THRESHOLD = 35;
+
         var source = "generated";
-        if (score >= 55) source = "retrieved";
-        else if (score >= 35) source = "inspired";
+        if (score >= RETRIEVE_THRESHOLD) source = "retrieved";
+        else if (score >= INSPIRE_THRESHOLD) source = "inspired";
+
+        // Debug entry (capture before any modifications)
+        var debugEntry = debug ? {
+          slideNumber: slideIdx,
+          targetType: planSlide.type,
+          targetLabel: planSlide.label,
+          targetArchetype: archetypeKey,
+          query: query,
+          candidatesFound: candidates.length,
+          hasIndex: retrieval.hasIndex,
+          topCandidates: candidates.slice(0, 5).map(function(c) { return { score: c.score, sourceDeck: c.sourceDeck, sourceSlideId: c.sourceSlideId, sourcePresentationId: c.sourcePresentationId, text: (c.text || "").substring(0, 100) }; }),
+          bestScore: score,
+          selectedMode: source.toUpperCase(),
+          sourceDeckId: best ? (best.sourcePresentationId || null) : null,
+          sourceSlideId: best ? (best.sourceSlideId || null) : null,
+          cloneAttempted: false,
+          cloneSuccess: false,
+          clonedSlideId: null,
+          fallbackReason: null,
+        } : null;
 
         var result;
+
+        // ── ATTEMPT CLONE if score >= CLONE_THRESHOLD ──
+        if (score >= CLONE_THRESHOLD && best && best.sourcePresentationId) {
+          debugEntry.selectedMode = "CLONE";
+          debugEntry.cloneAttempted = true;
+
+          // Attempt copySlide
+          var cloneReq = {
+            copySlide: {
+              objectId: sid,
+              sourceObjectId: best.sourceSlideId || best.slideId || "",
+              sourcePresentationId: best.sourcePresentationId,
+            }
+          };
+          allReqs.push(cloneReq);
+
+          // Debug footer label on cloned slide
+          if (debug) {
+            var footerId = "dbg" + sid;
+            allReqs.push({ createShape: {
+              objectId: footerId, shapeType: "TEXT_BOX",
+              elementProperties: { pageObjectId: sid, size: { width: { magnitude: 400, unit: "PT" }, height: { magnitude: 20, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 40, translateY: 510, unit: "PT" } }
+            }});
+            allReqs.push({ insertText: { objectId: footerId, text: "CLONED FROM: " + (best.sourceDeck || "?") + " (score: " + score + ")" } });
+            allReqs.push({ updateTextStyle: { objectId: footerId, style: { fontSize: { magnitude: 8, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: { red: 1, green: 0, blue: 0 } } } }, fields: "fontSize,foregroundColor" } });
+          }
+
+          sectionMap.push({ type: planSlide.type, label: planSlide.label, source: "cloned", score: score, slideIndex: slideIdx, class: "A" });
+          lineageRecords.push({ timestamp: new Date().toISOString(), generationMode: "cloned", archetype: archetypeKey, sectionType: planSlide.type, combinedScore: score, sourceDeckId: best.sourcePresentationId, sourceSlideId: best.sourceSlideId || best.slideId, finalPresentationId: presId });
+          logs.push("  [C] " + planSlide.type + " (score: " + score + ") from " + best.sourceDeck);
+
+          if (debug) {
+            debugEntry.cloneSuccess = true; // We won't know until batchUpdate, but assume for now
+            debugEntry.clonedSlideId = sid;
+            debugEntry.fallbackReason = null;
+            debugReport.push(debugEntry);
+          }
+          return; // Skip normal builder flow
+
+        } else if (score >= CLONE_THRESHOLD && best && !best.sourcePresentationId) {
+          debugEntry.selectedMode = "CLONE→FALLBACK";
+          debugEntry.cloneAttempted = true;
+          debugEntry.cloneSuccess = false;
+          debugEntry.fallbackReason = "No sourcePresentationId available for copySlide";
+          logs.push("  [C→F] " + planSlide.type + " — no source presentation ID");
+          // Fall through to retrieved/generate
+          source = score >= RETRIEVE_THRESHOLD ? "retrieved" : "generated";
+        }
+
+        // ── RETRIEVE: adapt historical content ──
         if (source === "retrieved" && best) {
           var adapted = polishContent(adaptRetrievedContent(best.text, prospectCompany, offerings, geo));
           var lines = adapted.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
           if (lines.length === 0) lines = [adapted.substring(0, 300)];
           result = { builder: buildSectionHeader, args: [planSlide.label, null, lines] };
-          logs.push("  [R] " + planSlide.type + " (" + score + ")");
+          logs.push("  [R] " + planSlide.type + " (score: " + score + ")");
+
         } else if (source === "inspired" && best) {
           var inspired = polishContent(adaptRetrievedContent(best.text, prospectCompany, offerings, geo));
           var iLines = inspired.split(/\n|\|/).filter(function(l) { return l.trim().length > 5; }).slice(0, 6);
@@ -798,8 +880,10 @@ export default function handler(req, res) {
           } else {
             result = generateSyntheticContent(planSlide.type, prospectCompany, offerings, angle.thesis, geo);
           }
-          logs.push("  [I] " + planSlide.type + " (" + score + ")");
+          logs.push("  [I] " + planSlide.type + " (score: " + score + ")");
+
         } else {
+          // ── GENERATE: build synthetically ──
           var synth = generateSyntheticContent(planSlide.type, prospectCompany, offerings, angle.thesis, geo);
           if (synth && synth.args && synth.args[2]) synth.args[2] = polishContent(synth.args[2]);
           result = synth;
@@ -812,6 +896,14 @@ export default function handler(req, res) {
           allReqs = allReqs.concat(reqs);
           sectionMap.push({ type: planSlide.type, label: planSlide.label, source: source, score: score, slideIndex: slideIdx, class: "A" });
           lineageRecords.push({ timestamp: new Date().toISOString(), generationMode: source, archetype: archetypeKey, sectionType: planSlide.type, combinedScore: score, finalPresentationId: presId });
+        } else {
+          debugEntry.fallbackReason = "Builder returned null";
+        }
+
+        if (debug) {
+          debugEntry.selectedMode = source.toUpperCase();
+          debugEntry.fallbackReason = debugEntry.fallbackReason || (source === "generated" ? "No retrieval match above threshold (best score: " + score + ")" : null);
+          debugReport.push(debugEntry);
         }
       });
 
@@ -829,6 +921,7 @@ export default function handler(req, res) {
           sectionMap.push({ type: planSlide.type, label: planSlide.label, source: "canonical", score: 0, slideIndex: slideIdx, class: "B" });
         }
         logs.push("  [B] " + planSlide.type);
+        if (debug) debugReport.push({ slideNumber: slideIdx, type: planSlide.type, mode: "CANONICAL", reason: "CLASS B static slide", query: null, candidates: [], score: 0 });
       });
 
       logs.push("Total: " + allReqs.length + " requests, " + lineageRecords.length + " lineage");
@@ -838,6 +931,26 @@ export default function handler(req, res) {
         method: "POST",
         body: JSON.stringify({ requests: allReqs }),
       }).then(function(batch) {
+        // Check for copySlide errors in batch response
+        var cloneErrors = [];
+        if (batch.data && batch.data.replies) {
+          batch.data.replies.forEach(function(reply, idx) {
+            if (reply && reply.error) {
+              var req = allReqs[idx] || {};
+              if (req.copySlide) {
+                cloneErrors.push({ slideId: req.copySlide.objectId, sourceId: req.copySlide.sourceObjectId, error: reply.error.message });
+                // Mark in debug report
+                if (debug) {
+                  debugReport.forEach(function(d) { if (d.clonedSlideId === req.copySlide.objectId) { d.cloneSuccess = false; d.cloneError = reply.error.message; } });
+                }
+              }
+            }
+          });
+        }
+        if (cloneErrors.length > 0) {
+          cloneErrors.forEach(function(e) { logs.push("CLONE ERROR: " + e.slideId + " from " + e.sourceId + " -> " + e.error); });
+        }
+
         if (!batch.ok) {
           fetch("https://www.googleapis.com/drive/v3/files/" + presId, { method: "DELETE", headers: { Authorization: "Bearer " + accessToken } }).catch(function(){});
           throw new Error(batch.data.error ? batch.data.error.message : "Batch failed");
@@ -847,16 +960,22 @@ export default function handler(req, res) {
 
         var folderPath = "";
         if (!DRIVE_ROOT) {
-          return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle };
+          return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined };
         }
         return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?fields=parents&supportsAllDrives=true")
           .then(function(before) {
             var currentParents = before.data.parents || ["root"];
             var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + DRIVE_ROOT + "' in parents and name='01 Generated Proposals' and trashed=false");
-            return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives")
+            return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,createdTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives")
               .then(function(search) {
-                var found = search.data.files || [];
-                if (found[0]) return found[0].id;
+                var found = (search.data.files || []).filter(function(f) { return f.id; });
+                if (found.length > 0) {
+                  // Sort by createdTime ascending (oldest first) to avoid duplicates
+                  found.sort(function(a, b) { return (a.createdTime || "").localeCompare(b.createdTime || ""); });
+                  logs.push("01 Generated Proposals: " + found.length + " found, using oldest (" + found[0].id.substring(0, 12) + "...)");
+                  return found[0].id;
+                }
+                logs.push("01 Generated Proposals: not found, creating");
                 return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", { method: "POST", body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_ROOT] }) }).then(function(c) { return c.data.id; });
               })
               .then(function(folderId) {
@@ -865,7 +984,7 @@ export default function handler(req, res) {
                   .then(function(moved) { if (moved.ok && (moved.data.parents || []).indexOf(folderId) >= 0) folderPath = "01 Generated Proposals"; return folderPath; });
               })
               .then(function(fp) {
-                return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle };
+                return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined, cloneErrors: cloneErrors.length > 0 ? cloneErrors : undefined };
               });
           });
       });
@@ -875,6 +994,6 @@ export default function handler(req, res) {
   }).catch(function(err) {
     console.error("[Slides]", err);
     res.statusCode = 500;
-    res.end(JSON.stringify({ ok: false, error: err.message, logs: logs }));
+    res.end(JSON.stringify({ ok: false, error: err.message, logs: logs, debugReport: debug ? debugReport : undefined }));
   });
 }
