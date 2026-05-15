@@ -417,17 +417,22 @@ var CANONICAL_MODULES = {
 };
 
 function buildCanonicalRequests(presId, modules, slideIndex, allReqs, logs) {
-  if (!modules || modules.length === 0 || !slideIndex || slideIndex.length === 0) {
-    logs.push("CANONICAL: no modules or no index");
+  if (!modules || modules.length === 0) {
+    logs.push("CANONICAL: no modules requested");
+    return [];
+  }
+  if (!slideIndex || slideIndex.length === 0) {
+    logs.push("CANONICAL: no slide index available — cannot clone modules");
     return [];
   }
 
-  logs.push("CANONICAL: building " + modules.length + " module(s)");
+  logs.push("CANONICAL: building " + modules.length + " module(s) against " + slideIndex.length + " indexed slides");
   var appendedSlides = [];
 
   modules.forEach(function(modKey) {
     var mod = CANONICAL_MODULES[modKey];
     if (!mod) { logs.push("CANONICAL: unknown module " + modKey); return; }
+    logs.push("CANONICAL: module=" + modKey + " label=" + mod.label + " seeking slideTypes=[" + mod.slideTypes.join(", ") + "]");
 
     mod.slideTypes.forEach(function(st) {
       var candidates = slideIndex.filter(function(s) {
@@ -435,13 +440,25 @@ function buildCanonicalRequests(presId, modules, slideIndex, allReqs, logs) {
       }).sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
 
       if (candidates.length === 0) {
-        logs.push("CANONICAL: no cloneable " + st + " for " + modKey);
+        logs.push("CANONICAL: module=" + modKey + " slideType=" + st + " | candidates=0 | REASON: no indexed slide has this type with a sourcePresentationId");
         return;
       }
 
       var best = candidates[0];
       var sid = "canonical_" + modKey + "_" + st + "_" + Math.random().toString(36).substring(2, 8);
-      logs.push("CANONICAL: cloning " + st + " from " + (best.sourceDeck || "?") + " (score:" + (best.score || "?") + ")");
+      var cloneAttempted = !!(best.sourcePresentationId && (best.sourceSlideId || best.slideId));
+      logs.push("CANONICAL: module=" + modKey + " slideType=" + st +
+        " | candidates=" + candidates.length +
+        " | selectedDeck=" + (best.sourceDeck || "?") +
+        " | selectedSlideId=" + (best.sourceSlideId || best.slideId || "?") +
+        " | sourcePresentationId=" + (best.sourcePresentationId ? "yes" : "no") +
+        " | cloneAttempted=" + (cloneAttempted ? "yes" : "no") +
+        " | score=" + (best.score || "?"));
+
+      if (!cloneAttempted) {
+        logs.push("CANONICAL: SKIP module=" + modKey + " — best candidate has no cloneable IDs");
+        return;
+      }
 
       allReqs.push({ createSlide: { objectId: sid, insertionIndex: 999 } });
       allReqs.push({
@@ -895,8 +912,7 @@ export default function handler(req, res) {
 
         // ── ATTEMPT CLONE if score >= CLONE_THRESHOLD ──
         if (score >= CLONE_THRESHOLD && best && best.sourcePresentationId) {
-          debugEntry.selectedMode = "CLONE";
-          debugEntry.cloneAttempted = true;
+          if (debug) { debugEntry.selectedMode = "CLONE"; debugEntry.cloneAttempted = true; }
 
           // Attempt copySlide
           var cloneReq = {
@@ -932,10 +948,7 @@ export default function handler(req, res) {
           return; // Skip normal builder flow
 
         } else if (score >= CLONE_THRESHOLD && best && !best.sourcePresentationId) {
-          debugEntry.selectedMode = "CLONE→FALLBACK";
-          debugEntry.cloneAttempted = true;
-          debugEntry.cloneSuccess = false;
-          debugEntry.fallbackReason = "No sourcePresentationId available for copySlide";
+          if (debug) { debugEntry.selectedMode = "CLONE→FALLBACK"; debugEntry.cloneAttempted = true; debugEntry.cloneSuccess = false; debugEntry.fallbackReason = "No sourcePresentationId available for copySlide"; }
           logs.push("  [C→F] " + planSlide.type + " — no source presentation ID");
           // Fall through to retrieved/generate
           source = score >= RETRIEVE_THRESHOLD ? "retrieved" : "generated";
@@ -974,7 +987,7 @@ export default function handler(req, res) {
           sectionMap.push({ type: planSlide.type, label: planSlide.label, source: source, score: score, slideIndex: slideIdx, class: "A" });
           lineageRecords.push({ timestamp: new Date().toISOString(), generationMode: source, archetype: archetypeKey, sectionType: planSlide.type, combinedScore: score, finalPresentationId: presId });
         } else {
-          debugEntry.fallbackReason = "Builder returned null";
+          if (debug) { debugEntry.fallbackReason = "Builder returned null"; }
         }
 
         if (debug) {
@@ -1003,9 +1016,10 @@ export default function handler(req, res) {
 
       // ── STEP 5b: Append canonical modules (if requested) ──
       var modules = body.modules || [];
-      if (modules.length > 0 && loadIndex) {
+      if (modules.length > 0 && slideIndex && slideIndex.slides) {
         logs.push("CANONICAL: appending modules: [" + modules.join(", ") + "]");
-        var canonicalSlides = buildCanonicalRequests(presId, modules, (loadIndex.data || {}).slides || [], allReqs, logs);
+        logs.push("CANONICAL: slideIndex has " + slideIndex.slides.length + " slides for matching");
+        var canonicalSlides = buildCanonicalRequests(presId, modules, slideIndex.slides || [], allReqs, logs);
         canonicalSlides.forEach(function(s) {
           sectionMap.push({ type: s.type, label: s.module, source: "canonical", score: s.score, slideIndex: slideIdx, class: "B" });
           slideIdx++;
