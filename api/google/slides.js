@@ -263,7 +263,7 @@ function classifySlideType(texts) {
   var best = null, bestScore = 0;
   for (var key in SLIDE_TYPE_SIGNALS) {
     var score = 0;
-    SLIDE_TYPE_SIGNALS[key].forEach(function(s) { if (fullText.includes(s)) score += 3; });
+    safeForEach(SLIDE_TYPE_SIGNALS[key], function(s) { if (fullText.includes(s)) score += 3; });
     if (score > bestScore) { best = key; bestScore = score; }
   }
   return best || "content";
@@ -870,7 +870,7 @@ export default function handler(req, res) {
     var canonicalSlides = orchestration.canonicalSlides || [];
 
     logs.push("=== ORCHESTRATOR ===");
-    logs.push("Thesis: " + angle.thesis.substring(0, 80));
+    logs.push("Thesis: " + (angle.thesis || "").substring(0, 80));
     logs.push("Dynamic: " + dynamicSlides.length + ", Canonical: " + canonicalSlides.length);
 
     var lineageRecords = [];
@@ -1064,20 +1064,41 @@ export default function handler(req, res) {
 
       logs.push("Total: " + allReqs.length + " requests, " + lineageRecords.length + " lineage");
 
+      // ── DIAGNOSTIC: log request composition ──
+      var reqTypes = {};
+      var slideIdsInReqs = [];
+      safeForEach(allReqs, function(rq, ri) {
+        var tk = Object.keys(rq || {})[0] || "unknown";
+        reqTypes[tk] = (reqTypes[tk] || 0) + 1;
+        if (ri < 6) {
+          var pid = (rq.createSlide && rq.createSlide.objectId) || (rq.copySlide && rq.copySlide.objectId) || "";
+          if (pid) slideIdsInReqs.push(pid);
+        }
+      });
+      logs.push("REQ_TYPES: " + JSON.stringify(reqTypes));
+      logs.push("REQ_COUNT: " + allReqs.length);
+      logs.push("REQ_PREVIEW: " + JSON.stringify(allReqs.slice(0, 2)));
+
       // ── STEP 6: batchUpdate ──
+      logs.push("BATCH_SEND: " + allReqs.length + " requests to " + presId);
       return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
         method: "POST",
         body: JSON.stringify({ requests: allReqs }),
       }).then(function(batch) {
-        // Check for copySlide errors in batch response
+        logs.push("BATCH_HTTP: status=" + batch.status + " ok=" + batch.ok);
+        logs.push("BATCH_REPLY_COUNT: " + ((batch.data && batch.data.replies) ? batch.data.replies.length : "none"));
+
+        // Check ALL reply errors — not just copySlide
+        var allReplyErrors = [];
         var cloneErrors = [];
         if (batch.data && batch.data.replies) {
           safeForEach(batch.data.replies, function(reply, idx) {
             if (reply && reply.error) {
               var req = allReqs[idx] || {};
+              var reqType = Object.keys(req)[0] || "unknown";
+              allReplyErrors.push({ index: idx, type: reqType, code: reply.error.code, message: reply.error.message });
               if (req.copySlide) {
                 cloneErrors.push({ slideId: req.copySlide.objectId, sourceId: req.copySlide.sourceObjectId, error: reply.error.message });
-                // Mark in debug report
                 if (debug) {
                   safeForEach(debugReport, function(d) { if (d.clonedSlideId === req.copySlide.objectId) { d.cloneSuccess = false; d.cloneError = reply.error.message; } });
                 }
@@ -1085,16 +1106,27 @@ export default function handler(req, res) {
             }
           });
         }
+        if (allReplyErrors.length > 0) {
+          logs.push("BATCH_REPLY_ERRORS: " + JSON.stringify(allReplyErrors.slice(0, 20)));
+        }
         if (cloneErrors.length > 0) {
           safeForEach(cloneErrors, function(e) { logs.push("CLONE ERROR: " + e.slideId + " from " + e.sourceId + " -> " + e.error); });
         }
 
         if (!batch.ok) {
-          logs.push("BATCH FAILED: " + (batch.data && batch.data.error ? batch.data.error.message : "unknown"));
-          return { ok: true, partial: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, strategicAngle: angle, error: "batchUpdate failed: " + (batch.data && batch.data.error ? batch.data.error.message : "unknown") };
+          logs.push("BATCH_FAILED_HTTP: status=" + batch.status + " body=" + JSON.stringify(batch.data));
+          return { ok: true, partial: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, strategicAngle: angle, error: "batchUpdate HTTP " + batch.status + ": " + (batch.data && batch.data.error ? batch.data.error.message : "unknown") };
         }
         logs.push("Batch applied: " + allReqs.length + " requests");
-        if (lineageRecords.length > 0) saveLineage(accessToken, lineageRecords, logs).catch(function(){});
+
+        // ── DIAGNOSTIC: verify pages after batchUpdate ──
+        return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "?fields=slides(objectId)")
+          .then(function(presCheck) {
+            var pageIds = (presCheck.data && presCheck.data.slides) ? presCheck.data.slides.map(function(s) { return s.objectId; }) : [];
+            logs.push("PAGES_AFTER_BATCH: " + pageIds.length + " slides => [" + pageIds.join(", ") + "]");
+          }).catch(function(e) { logs.push("PAGE_CHECK_ERROR: " + (e.message || String(e))); })
+          .then(function() {
+            if (lineageRecords.length > 0) saveLineage(accessToken, lineageRecords, logs).catch(function(){});
 
         var folderPath = "";
         if (!resolvedRootId) {
@@ -1123,9 +1155,10 @@ export default function handler(req, res) {
               .then(function(fp) {
                 return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined, cloneErrors: cloneErrors.length > 0 ? cloneErrors : undefined };
               });
+          });
       });
-    }); // closes Promise.all([indexPromise, dnaPromise]).then() callback
-  }); // closes resolveWorkspaceRoot().then() callback
+    }); // closes withTimeout(Promise.all([indexPromise, dnaPromise])).then() callback
+  }); // closes workspacePromise callback (if any)
   }).then(function(result) {
     res.end(JSON.stringify(result));
   }).catch(function(err) {
