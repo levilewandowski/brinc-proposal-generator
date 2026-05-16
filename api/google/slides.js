@@ -7,6 +7,21 @@ import { orchestrateProposal, polishContent } from "./orchestrator.js";
 import { resolveWorkspaceRoot } from "./workspace.js";
 // ═══════════════════════════════════════════════════════════
 
+// ── Defensive Helpers ─────────────────────────────────────
+
+function safeForEach(arr, fn) {
+  if (Array.isArray(arr)) arr.forEach(fn);
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise(function(_, reject) {
+      setTimeout(function() { reject(new Error("TIMEOUT: operation exceeded " + ms + "ms")); }, ms);
+    })
+  ]);
+}
+
 // ── Archetype Data ────────────────────────────────────────
 
 var ARCHETYPES = {
@@ -218,7 +233,7 @@ function buildTimeline(sid, title, phases) {
   r = r.concat(rectangle("tlbar" + sid, sid, 40, 140, 640, 3, COLORS.accent));
   var startX = 50;
   var step = phases.length > 1 ? 580 / (phases.length - 1) : 580;
-  phases.forEach(function(phase, i) {
+  safeForEach(phases, function(phase, i) {
     var x = startX + step * i;
     r = r.concat(rectangle("tld" + sid + "_" + i, sid, x, 134, 15, 15, COLORS.navy));
     r = r.concat(textBox("tll" + sid + "_" + i, sid, x - 30, 160, 120, 60, phase, grayText(10), "fontSize,foregroundColor"));
@@ -232,7 +247,7 @@ function buildMetrics(sid, title, metrics) {
   r = r.concat(accentBar(sid, 40, 42));
   r = r.concat(textBox("ht" + sid, sid, 40, 48, 620, 50, title, navyText(28), "bold,fontSize,foregroundColor"));
   var cols = 3, colW = 200, startX = 40, startY = 130;
-  metrics.forEach(function(m, i) {
+  safeForEach(metrics, function(m, i) {
     var col = i % cols, row = Math.floor(i / cols);
     var x = startX + col * (colW + 20), y = startY + row * 140;
     r = r.concat(textBox("mn" + sid + "_" + i, sid, x, y, colW, 50, m.value || "\u2014", { bold: true, fontSize: { magnitude: 36, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: COLORS.navy } } }, "bold,fontSize,foregroundColor"));
@@ -269,7 +284,7 @@ function scoreCandidate(candidate, query) {
   if (query.keywords && query.keywords.length > 0 && candidate.text) {
     var cText = candidate.text.toLowerCase();
     var matches = 0;
-    query.keywords.forEach(function(kw) { if (cText.includes(kw.toLowerCase())) matches++; });
+    safeForEach(query.keywords, function(kw) { if (cText.includes(kw.toLowerCase())) matches++; });
     score += Math.floor(20 * matches / query.keywords.length);
   }
   maxScore += 20;
@@ -287,7 +302,7 @@ function scoreCandidate(candidate, query) {
   if (query.offerings && query.offerings.length > 0 && candidate.text) {
     var cText2 = candidate.text.toLowerCase();
     var offMatches = 0;
-    query.offerings.forEach(function(off) {
+    safeForEach(query.offerings, function(off) {
       off.toLowerCase().split(/\s+/).filter(function(w) { return w.length > 3; }).forEach(function(w) { if (cText2.includes(w)) offMatches++; });
     });
     score += Math.min(15, Math.floor(15 * offMatches / query.offerings.length));
@@ -324,7 +339,7 @@ function buildAssemblyPlan(slideIndex, dnaIndex, archetype, offerings, geography
   var rules = COMPONENT_RULES[archetype] || COMPONENT_RULES.accelerator;
   var plan = [];
 
-  arch.sectionOrder.forEach(function(sectionType, idx) {
+  safeForEach(arch.sectionOrder, function(sectionType, idx) {
     var query = { slideType: sectionType, archetype: archetype, keywords: SLIDE_TYPE_SIGNALS[sectionType] || [], geography: geography, offerings: offerings };
 
     // 1. Text-based retrieval
@@ -429,12 +444,12 @@ function buildCanonicalRequests(presId, modules, slideIndex, allReqs, logs) {
   logs.push("CANONICAL: building " + modules.length + " module(s) against " + slideIndex.length + " indexed slides");
   var appendedSlides = [];
 
-  modules.forEach(function(modKey) {
+  safeForEach(modules, function(modKey) {
     var mod = CANONICAL_MODULES[modKey];
     if (!mod) { logs.push("CANONICAL: unknown module " + modKey); return; }
     logs.push("CANONICAL: module=" + modKey + " label=" + mod.label + " seeking slideTypes=[" + mod.slideTypes.join(", ") + "]");
 
-    mod.slideTypes.forEach(function(st) {
+    safeForEach(mod.slideTypes, function(st) {
       var candidates = slideIndex.filter(function(s) {
         return s.slideType === st && s.sourcePresentationId;
       }).sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
@@ -496,7 +511,7 @@ function applyCoherence(plan, archetype) {
   var lastSourceDeck = null;
   var consecutiveFromSame = 0;
 
-  plan.forEach(function(sec, idx) {
+  safeForEach(plan, function(sec, idx) {
     // Adjacent-slide source consistency
     if (sec.candidate && sec.candidate.sourceDeck) {
       if (sec.candidate.sourceDeck === lastSourceDeck) {
@@ -814,24 +829,45 @@ export default function handler(req, res) {
   //  CLASS B: Canonical static slides (appended)
   // ═══════════════════════════════════════════════════════════
 
-  Promise.all([indexPromise, dnaPromise]).then(function(results) {
-    var slideIndex = results[0];
-    var dnaIndex = results[1];
+  // Hard timeout: 7s (Vercel kills at 10s)
+  var startTime = Date.now();
+  var HARD_TIMEOUT_MS = 7000;
+  function isTimedOut(stage) {
+    if (Date.now() - startTime > HARD_TIMEOUT_MS) {
+      logs.push("TIMEOUT at " + stage + " after " + (Date.now() - startTime) + "ms");
+      return true;
+    }
+    return false;
+  }
+
+  withTimeout(Promise.all([indexPromise, dnaPromise]), 7500).then(function(results) {
+    if (isTimedOut("post-index")) {
+      return { ok: false, error: "TIMEOUT: Index loading exceeded " + HARD_TIMEOUT_MS + "ms", stage: "index_loading", logs: logs };
+    }
+
+    var slideIndex = results[0] || { files: [] };
+    var dnaIndex = results[1] || { files: [] };
 
     // ── STEP 1: Orchestrate proposal ──
-    var orchestration = orchestrateProposal({
-      prospectCompany: prospectCompany,
-      prospectName: prospectName,
-      offerings: offerings,
-      suggestedAngle: suggestedAngle,
-      archetype: archetypeKey,
-      geography: geo,
-      otherNotes: otherNotes,
-    });
+    var orchestration;
+    try {
+      orchestration = orchestrateProposal({
+        prospectCompany: prospectCompany,
+        prospectName: prospectName,
+        offerings: offerings,
+        suggestedAngle: suggestedAngle,
+        archetype: archetypeKey,
+        geography: geo,
+        otherNotes: otherNotes,
+      });
+    } catch (e) {
+      logs.push("ORCHESTRATE ERROR: " + (e.message || String(e)));
+      orchestration = { angle: { thesis: title }, dynamicSlides: [], canonicalSlides: [] };
+    }
 
-    var angle = orchestration.angle;
-    var dynamicSlides = orchestration.dynamicSlides;
-    var canonicalSlides = orchestration.canonicalSlides;
+    var angle = orchestration.angle || { thesis: title };
+    var dynamicSlides = orchestration.dynamicSlides || [];
+    var canonicalSlides = orchestration.canonicalSlides || [];
 
     logs.push("=== ORCHESTRATOR ===");
     logs.push("Thesis: " + angle.thesis.substring(0, 80));
@@ -846,7 +882,7 @@ export default function handler(req, res) {
       method: "POST",
       body: JSON.stringify({ title: title }),
     }).then(function(created) {
-      if (!created.ok) throw new Error(created.data.error ? created.data.error.message : "Create failed");
+      if (!created.ok) { logs.push("CREATE FAILED: " + (created.data && created.data.error ? created.data.error.message : "unknown")); return { ok: false, error: "Failed to create presentation: " + (created.data && created.data.error ? created.data.error.message : "unknown"), stage: "create_presentation", logs: logs }; }
       var presId = created.data.presentationId;
       logs.push("Created: " + presId);
 
@@ -866,7 +902,7 @@ export default function handler(req, res) {
 
       // ── STEP 4: CLASS A — Dynamic Strategic ──
       logs.push("--- CLASS A ---");
-      dynamicSlides.forEach(function(planSlide) {
+      safeForEach(dynamicSlides, function(planSlide) {
         var sid = "s" + now + "_" + slideIdx;
         slideIdx++;
 
@@ -999,7 +1035,7 @@ export default function handler(req, res) {
 
       // ── STEP 5: CLASS B — Canonical Static ──
       logs.push("--- CLASS B ---");
-      canonicalSlides.forEach(function(planSlide) {
+      safeForEach(canonicalSlides, function(planSlide) {
         var sid = "s" + now + "_" + slideIdx;
         slideIdx++;
         var result = generateSyntheticContent(planSlide.type, prospectCompany, offerings, angle.thesis, geo);
@@ -1020,7 +1056,7 @@ export default function handler(req, res) {
         logs.push("CANONICAL: appending modules: [" + modules.join(", ") + "]");
         logs.push("CANONICAL: slideIndex has " + slideIndex.slides.length + " slides for matching");
         var canonicalSlides = buildCanonicalRequests(presId, modules, slideIndex.slides || [], allReqs, logs);
-        canonicalSlides.forEach(function(s) {
+        safeForEach(canonicalSlides, function(s) {
           sectionMap.push({ type: s.type, label: s.module, source: "canonical", score: s.score, slideIndex: slideIdx, class: "B" });
           slideIdx++;
         });
@@ -1036,26 +1072,26 @@ export default function handler(req, res) {
         // Check for copySlide errors in batch response
         var cloneErrors = [];
         if (batch.data && batch.data.replies) {
-          batch.data.replies.forEach(function(reply, idx) {
+          safeForEach(batch.data.replies, function(reply, idx) {
             if (reply && reply.error) {
               var req = allReqs[idx] || {};
               if (req.copySlide) {
                 cloneErrors.push({ slideId: req.copySlide.objectId, sourceId: req.copySlide.sourceObjectId, error: reply.error.message });
                 // Mark in debug report
                 if (debug) {
-                  debugReport.forEach(function(d) { if (d.clonedSlideId === req.copySlide.objectId) { d.cloneSuccess = false; d.cloneError = reply.error.message; } });
+                  safeForEach(debugReport, function(d) { if (d.clonedSlideId === req.copySlide.objectId) { d.cloneSuccess = false; d.cloneError = reply.error.message; } });
                 }
               }
             }
           });
         }
         if (cloneErrors.length > 0) {
-          cloneErrors.forEach(function(e) { logs.push("CLONE ERROR: " + e.slideId + " from " + e.sourceId + " -> " + e.error); });
+          safeForEach(cloneErrors, function(e) { logs.push("CLONE ERROR: " + e.slideId + " from " + e.sourceId + " -> " + e.error); });
         }
 
         if (!batch.ok) {
-          fetch("https://www.googleapis.com/drive/v3/files/" + presId, { method: "DELETE", headers: { Authorization: "Bearer " + accessToken } }).catch(function(){});
-          throw new Error(batch.data.error ? batch.data.error.message : "Batch failed");
+          logs.push("BATCH FAILED: " + (batch.data && batch.data.error ? batch.data.error.message : "unknown"));
+          return { ok: true, partial: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, strategicAngle: angle, error: "batchUpdate failed: " + (batch.data && batch.data.error ? batch.data.error.message : "unknown") };
         }
         logs.push("Batch applied: " + allReqs.length + " requests");
         if (lineageRecords.length > 0) saveLineage(accessToken, lineageRecords, logs).catch(function(){});
@@ -1095,6 +1131,7 @@ export default function handler(req, res) {
   }).catch(function(err) {
     console.error("[Slides]", err);
     res.statusCode = 500;
-    res.end(JSON.stringify({ ok: false, error: err.message, logs: logs, debugReport: debug ? debugReport : undefined }));
+    var isTimeout = err.message && err.message.indexOf("TIMEOUT") !== -1;
+    res.end(JSON.stringify({ ok: false, error: err.message, stage: isTimeout ? "timeout" : "runtime_error", logs: logs || [], debugReport: debug ? debugReport : undefined }));
   });
 }
