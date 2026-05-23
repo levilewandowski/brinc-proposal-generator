@@ -21,6 +21,9 @@ export default function ProposalView() {
   const [assemblyMap, setAssemblyMap] = useState<any[]>([]);
   const [debugReport, setDebugReport] = useState<any[] | null>(null);
   const [cloneErrors, setCloneErrors] = useState<any[] | null>(null);
+  const [apiLogs, setApiLogs] = useState<string[]>([]);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [batchDiagnostics, setBatchDiagnostics] = useState<Record<string, any> | null>(null);
   const [debugMode, setDebugMode] = useState(false);
   const [selectedModules, setSelectedModules] = useState<string[]>(["brinc_intro", "team", "metrics", "next_steps"]);
 
@@ -101,6 +104,22 @@ export default function ProposalView() {
       setAssemblyMap(data.sectionMap || []);
       setDebugReport(data.debugReport || null);
       setCloneErrors(data.cloneErrors || null);
+      setApiLogs(data.logs || []);
+      setApiError(data.error || null);
+      // Extract structured batch diagnostics from logs
+      const diags: Record<string, any> = {};
+      (data.logs || []).forEach((line: string) => {
+        if (line.startsWith("REQ_TYPES:")) try { diags.REQ_TYPES = JSON.parse(line.replace("REQ_TYPES: ", "")); } catch {}
+        if (line.startsWith("REQ_COUNT:")) diags.REQ_COUNT = line.replace("REQ_COUNT: ", "");
+        if (line.startsWith("REQ_PREVIEW:")) try { diags.REQ_PREVIEW = JSON.parse(line.replace("REQ_PREVIEW: ", "")); } catch {}
+        if (line.startsWith("BATCH_HTTP:")) diags.BATCH_HTTP = line.replace("BATCH_HTTP: ", "");
+        if (line.startsWith("BATCH_REPLY_COUNT:")) diags.BATCH_REPLY_COUNT = line.replace("BATCH_REPLY_COUNT: ", "");
+        if (line.startsWith("BATCH_REPLY_ERRORS:")) try { diags.BATCH_REPLY_ERRORS = JSON.parse(line.replace("BATCH_REPLY_ERRORS: ", "")); } catch {}
+        if (line.startsWith("PAGES_AFTER_BATCH:")) diags.PAGES_AFTER_BATCH = line.replace("PAGES_AFTER_BATCH: ", "");
+        if (line.startsWith("BATCH_SEND:")) diags.BATCH_SEND = line.replace("BATCH_SEND: ", "");
+        if (line.startsWith("BATCH_FAILED_HTTP:")) diags.BATCH_FAILED_HTTP = line.replace("BATCH_FAILED_HTTP: ", "");
+      });
+      setBatchDiagnostics(Object.keys(diags).length > 0 ? diags : null);
       const retrieved = (data.sectionMap || []).filter((s: any) => s.source === "retrieved").length;
       const inspired = (data.sectionMap || []).filter((s: any) => s.source === "inspired").length;
       const generated = (data.sectionMap || []).filter((s: any) => s.source === "generated").length;
@@ -213,10 +232,15 @@ export default function ProposalView() {
                   </Button>
                 ) : (
                   <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-green-600">
-                      <CheckCircle className="w-4 h-4" />
-                      <span className="text-sm font-medium">Slides Created</span>
+                    <div className={`flex items-center gap-2 ${apiError ? "text-amber-600" : "text-green-600"}`}>
+                      {apiError ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
+                      <span className="text-sm font-medium">{apiError ? "Slides Partial (see diagnostics)" : "Slides Created"}</span>
                     </div>
+                    {apiError && (
+                      <div className="text-[10px] text-amber-700 bg-amber-100 rounded p-2 border border-amber-200">
+                        batchUpdate issue detected. Check "BatchUpdate Diagnostics" panel below.
+                      </div>
+                    )}
                     <Button variant="outline" className="w-full gap-2" onClick={() => window.open(slidesUrl!, "_blank")}>
                       <ExternalLink className="w-4 h-4" /> Open in Google Slides
                     </Button>
@@ -297,6 +321,60 @@ export default function ProposalView() {
                       </div>
                     ))}
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Batch Execution Diagnostics */}
+            {batchDiagnostics && (
+              <Card className="border-amber-300 bg-amber-50/50 shadow-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm text-amber-800 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    BatchUpdate Diagnostics
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2 text-xs font-mono">
+                    {batchDiagnostics.REQ_COUNT !== undefined && (
+                      <div className="flex justify-between"><span className="text-slate-500">REQ_COUNT:</span><span className="font-bold text-amber-700">{batchDiagnostics.REQ_COUNT}</span></div>
+                    )}
+                    {batchDiagnostics.REQ_TYPES !== undefined && (
+                      <div className="flex justify-between"><span className="text-slate-500">REQ_TYPES:</span><span className="text-amber-700">{JSON.stringify(batchDiagnostics.REQ_TYPES)}</span></div>
+                    )}
+                    {batchDiagnostics.BATCH_HTTP !== undefined && (
+                      <div className="flex justify-between"><span className="text-slate-500">BATCH_HTTP:</span><span className={batchDiagnostics.BATCH_HTTP.includes("ok=true") ? "text-green-600 font-bold" : "text-red-600 font-bold"}>{batchDiagnostics.BATCH_HTTP}</span></div>
+                    )}
+                    {batchDiagnostics.BATCH_SEND !== undefined && (
+                      <div className="flex justify-between"><span className="text-slate-500">BATCH_SEND:</span><span className="text-amber-700">{batchDiagnostics.BATCH_SEND}</span></div>
+                    )}
+                    {batchDiagnostics.BATCH_REPLY_COUNT !== undefined && (
+                      <div className="flex justify-between"><span className="text-slate-500">BATCH_REPLY_COUNT:</span><span className="text-amber-700">{batchDiagnostics.BATCH_REPLY_COUNT}</span></div>
+                    )}
+                    {batchDiagnostics.BATCH_REPLY_ERRORS !== undefined && (
+                      <div>
+                        <span className="text-red-500 font-bold">BATCH_REPLY_ERRORS:</span>
+                        <pre className="text-red-600 bg-red-50 rounded p-2 mt-1 overflow-auto max-h-40">{JSON.stringify(batchDiagnostics.BATCH_REPLY_ERRORS, null, 2)}</pre>
+                      </div>
+                    )}
+                    {batchDiagnostics.PAGES_AFTER_BATCH !== undefined && (
+                      <div className="flex justify-between"><span className="text-slate-500">PAGES_AFTER_BATCH:</span><span className="text-amber-700">{batchDiagnostics.PAGES_AFTER_BATCH}</span></div>
+                    )}
+                    {batchDiagnostics.BATCH_FAILED_HTTP !== undefined && (
+                      <div className="bg-red-100 rounded p-2"><span className="text-red-600 font-bold">BATCH_FAILED_HTTP:</span><span className="text-red-700">{batchDiagnostics.BATCH_FAILED_HTTP}</span></div>
+                    )}
+                  </div>
+                  {apiError && (
+                    <div className="mt-3 bg-red-100 border border-red-300 rounded p-2 text-xs text-red-700 font-bold">
+                      API ERROR: {apiError}
+                    </div>
+                  )}
+                  {debugMode && apiLogs.length > 0 && (
+                    <details className="mt-3">
+                      <summary className="cursor-pointer text-xs text-slate-500 font-medium">Raw Logs ({apiLogs.length} lines)</summary>
+                      <pre className="mt-2 text-[10px] bg-slate-900 text-slate-200 rounded p-3 overflow-auto max-h-96">{apiLogs.join("\n")}</pre>
+                    </details>
+                  )}
                 </CardContent>
               </Card>
             )}
