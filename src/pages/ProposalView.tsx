@@ -95,9 +95,16 @@ export default function ProposalView() {
         }),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(text); } catch { /* leave as {} */ }
       if (!res.ok) {
-        throw new Error(data.error || "Failed to create slides");
+        setApiError("HTTP " + res.status + ": " + (data.error || text || "Unknown error"));
+        setApiLogs(data.logs || []);
+        setSlidesUrl(data.webViewLink || null);
+        setAssemblyMap(data.sectionMap || []);
+        setDebugReport(data.debugReport || null);
+        throw new Error(data.error || "HTTP " + res.status);
       }
 
       setSlidesUrl(data.webViewLink);
@@ -127,8 +134,12 @@ export default function ProposalView() {
       const cloneErrCount = (data.cloneErrors || []).length;
       toast.success(`Slides: ${data.slideCount} (${cloned} cloned, ${retrieved} retrieved, ${inspired} inspired, ${generated} generated)${cloneErrCount > 0 ? ` · ${cloneErrCount} clone errors` : ""}`);
     } catch (err: any) {
-      console.error("[Create Slides] Error:", err);
-      toast.error("Failed to create slides: " + (err.message || String(err)));
+      const elapsed = Date.now() - startTime;
+      console.error("[Create Slides] Error after " + elapsed + "ms:", err);
+      toast.error("Failed after " + elapsed + "ms: " + (err.message || String(err)));
+      // Ensure apiError is set even for network/JSON parse failures
+      setApiError((prev) => prev || (err.message || String(err)));
+      setApiLogs((prev) => prev.length > 0 ? prev : ["FRONTEND_CATCH: " + (err.message || String(err)) + " | elapsed=" + elapsed + "ms | httpStatus=" + httpStatus + " | response=" + responseText.substring(0, 500)]);
     } finally {
       setCreating(false);
     }
@@ -325,8 +336,8 @@ export default function ProposalView() {
               </Card>
             )}
 
-            {/* Batch Execution Diagnostics — always show in debug mode */}
-            {debugMode && slidesUrl && (
+            {/* Batch Execution Diagnostics — show in debug mode after any attempt */}
+            {debugMode && (slidesUrl || apiError) && (
               <Card className="border-amber-300 bg-amber-50/50 shadow-sm">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm text-amber-800 flex items-center gap-2">

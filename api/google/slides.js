@@ -1068,38 +1068,56 @@ export default function handler(req, res) {
       // ── STEP 5c: Execute clones via presentations.pages.copy ──
       var clonePromise = Promise.resolve({ cloneResults: [] });
       if (cloneOps.length > 0) {
-        logs.push("CLONE_EXEC: " + cloneOps.length + " slides via pages.copy");
-        clonePromise = Promise.all(cloneOps.map(function(op) {
-          return copyPage(accessToken, presId, op.newSlideId, op.sourceSlideId, op.sourcePresentationId)
-            .then(function(result) {
-              if (result.ok) {
-                logs.push("CLONE_OK: " + op.newSlideId);
-                // Debug footer on cloned slide
-                if (op.debugFooter) {
-                  var footerId = "dbg" + op.newSlideId;
-                  return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
-                    method: "POST",
-                    body: JSON.stringify({ requests: [
-                      { createShape: { objectId: footerId, shapeType: "TEXT_BOX",
-                        elementProperties: { pageObjectId: op.newSlideId, size: { width: { magnitude: 400, unit: "PT" }, height: { magnitude: 20, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 40, translateY: 510, unit: "PT" } } } },
-                      { insertText: { objectId: footerId, text: op.debugFooter } },
-                      { updateTextStyle: { objectId: footerId, style: { fontSize: { magnitude: 8, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: { red: 1, green: 0, blue: 0 } } } }, fields: "fontSize,foregroundColor" } }
-                    ]})
-                  }).then(function() { return { ok: true, id: op.newSlideId }; });
-                }
-                return { ok: true, id: op.newSlideId };
-              } else {
-                logs.push("CLONE_FAIL: " + op.newSlideId + " -> " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
-                return { ok: false, id: op.newSlideId, error: result.data && result.data.error ? result.data.error.message : "HTTP " + result.status };
-              }
-            }).catch(function(err) {
-              logs.push("CLONE_ERROR: " + op.newSlideId + " -> " + (err.message || String(err)));
-              return { ok: false, id: op.newSlideId, error: err.message || String(err) };
+        // Log all planned clones before execution
+        safeForEach(cloneOps, function(op, oi) {
+          logs.push("CLONE_PLAN[" + oi + "]: newSlideId=" + op.newSlideId + " sourcePres=" + op.sourcePresentationId + " sourceSlide=" + op.sourceSlideId);
+        });
+        logs.push("CLONE_EXEC_START: " + cloneOps.length + " slides");
+        var cloneStart = Date.now();
+        // Sequential clones with 5s total timeout to avoid hanging the serverless function
+        clonePromise = withTimeout(
+          cloneOps.reduce(function(chain, op) {
+            return chain.then(function(results) {
+              return copyPage(accessToken, presId, op.newSlideId, op.sourceSlideId, op.sourcePresentationId)
+                .then(function(result) {
+                  if (result.ok) {
+                    logs.push("CLONE_OK: " + op.newSlideId);
+                    // Debug footer on cloned slide
+                    if (op.debugFooter) {
+                      var footerId = "dbg" + op.newSlideId;
+                      return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
+                        method: "POST",
+                        body: JSON.stringify({ requests: [
+                          { createShape: { objectId: footerId, shapeType: "TEXT_BOX",
+                            elementProperties: { pageObjectId: op.newSlideId, size: { width: { magnitude: 400, unit: "PT" }, height: { magnitude: 20, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 40, translateY: 510, unit: "PT" } } } },
+                          { insertText: { objectId: footerId, text: op.debugFooter } },
+                          { updateTextStyle: { objectId: footerId, style: { fontSize: { magnitude: 8, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: { red: 1, green: 0, blue: 0 } } } }, fields: "fontSize,foregroundColor" } }
+                        ]})
+                      }).then(function() { results.push({ ok: true, id: op.newSlideId }); return results; })
+                        .catch(function() { results.push({ ok: true, id: op.newSlideId, footerSkipped: true }); return results; });
+                    }
+                    results.push({ ok: true, id: op.newSlideId });
+                    return results;
+                  } else {
+                    logs.push("CLONE_FAIL: " + op.newSlideId + " -> " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
+                    results.push({ ok: false, id: op.newSlideId, error: result.data && result.data.error ? result.data.error.message : "HTTP " + result.status });
+                    return results;
+                  }
+                }).catch(function(err) {
+                  logs.push("CLONE_ERROR: " + op.newSlideId + " -> " + (err.message || String(err)));
+                  results.push({ ok: false, id: op.newSlideId, error: err.message || String(err) });
+                  return results;
+                });
             });
-        })).then(function(results) {
+          }, Promise.resolve([])),
+          5000
+        ).then(function(results) {
           var ok = results.filter(function(r) { return r.ok; }).length;
-          logs.push("CLONE_SUMMARY: " + ok + "/" + results.length + " succeeded");
+          logs.push("CLONE_EXEC_DONE: " + ok + "/" + results.length + " succeeded in " + (Date.now() - cloneStart) + "ms");
           return { cloneResults: results };
+        }).catch(function(err) {
+          logs.push("CLONE_TIMEOUT_OR_FAIL: " + (err.message || String(err)) + " after " + (Date.now() - cloneStart) + "ms");
+          return { cloneResults: [], timedOut: true };
         });
       }
 
