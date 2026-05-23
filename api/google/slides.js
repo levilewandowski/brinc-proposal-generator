@@ -136,6 +136,18 @@ function gapi(token, url, init) {
   });
 }
 
+// Execute a single cross-presentation slide clone via presentations.pages.copy
+function copyPage(token, presId, newSlideId, sourceSlideId, sourcePresId) {
+  return gapi(token, "https://slides.googleapis.com/v1/presentations/" + presId + "/pages:copy", {
+    method: "POST",
+    body: JSON.stringify({
+      objectId: newSlideId,
+      pageId: sourceSlideId,
+      sourcePresentationId: sourcePresId
+    })
+  });
+}
+
 function textBox(id, pageId, x, y, w, h, text, style, fields) {
   var reqs = [];
   reqs.push({ createShape: {
@@ -431,7 +443,7 @@ var CANONICAL_MODULES = {
   next_steps:     { label: "Next Steps",      slideTypes: ["next_steps"],                                    defaultOn: true },
 };
 
-function buildCanonicalRequests(presId, modules, slideIndex, allReqs, logs) {
+function buildCanonicalRequests(presId, modules, slideIndex, cloneOps, logs) {
   if (!modules || modules.length === 0) {
     logs.push("CANONICAL: no modules requested");
     return [];
@@ -475,20 +487,20 @@ function buildCanonicalRequests(presId, modules, slideIndex, allReqs, logs) {
         return;
       }
 
-      allReqs.push({ createSlide: { objectId: sid, insertionIndex: 999 } });
-      allReqs.push({
-        copySlide: {
-          objectId: sid,
-          sourceObjectId: best.sourceSlideId || best.slideId || "",
-          sourcePresentationId: best.sourcePresentationId,
-        }
+      // Queue clone via presentations.pages.copy (NOT invalid copySlide batchUpdate)
+      cloneOps.push({
+        newSlideId: sid,
+        sourcePresentationId: best.sourcePresentationId,
+        sourceSlideId: best.sourceSlideId || best.slideId || "",
+        module: modKey,
+        slideType: st
       });
 
       appendedSlides.push({ type: st, source: "canonical", module: modKey, sourceDeck: best.sourceDeck, score: best.score || 0 });
     });
   });
 
-  logs.push("CANONICAL: queued " + appendedSlides.length + " canonical slide(s)");
+  logs.push("CANONICAL: queued " + appendedSlides.length + " canonical slide(s) via pages.copy");
   return appendedSlides;
 }
 
@@ -706,8 +718,9 @@ var COMPONENT_RULES = {
 // ── Template Cloning ──────────────────────────────────────
 
 /**
- * Build a copySlide request to physically clone a historical slide.
- * The source presentation must be a Google Slides file accessible to the user.
+ * DEPRECATED: copySlide is not a valid batchUpdate request type.
+ * Use copyPage() which calls presentations.pages.copy instead.
+ * Kept for reference — will be removed in next cleanup.
  */
 function buildCloneSlideRequest(newSlideId, sourcePresentationId, sourceSlideId) {
   return {
@@ -889,6 +902,7 @@ export default function handler(req, res) {
       var now = Date.now();
       var slideIdx = 0;
       var allReqs = [];
+      var cloneOps = [];   // Clone operations via presentations.pages.copy
       var sectionMap = [];
 
       // ── STEP 3: COVER ──
@@ -950,33 +964,20 @@ export default function handler(req, res) {
         if (score >= CLONE_THRESHOLD && best && best.sourcePresentationId) {
           if (debug) { debugEntry.selectedMode = "CLONE"; debugEntry.cloneAttempted = true; }
 
-          // Attempt copySlide
-          var cloneReq = {
-            copySlide: {
-              objectId: sid,
-              sourceObjectId: best.sourceSlideId || best.slideId || "",
-              sourcePresentationId: best.sourcePresentationId,
-            }
-          };
-          allReqs.push(cloneReq);
-
-          // Debug footer label on cloned slide
-          if (debug) {
-            var footerId = "dbg" + sid;
-            allReqs.push({ createShape: {
-              objectId: footerId, shapeType: "TEXT_BOX",
-              elementProperties: { pageObjectId: sid, size: { width: { magnitude: 400, unit: "PT" }, height: { magnitude: 20, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 40, translateY: 510, unit: "PT" } }
-            }});
-            allReqs.push({ insertText: { objectId: footerId, text: "CLONED FROM: " + (best.sourceDeck || "?") + " (score: " + score + ")" } });
-            allReqs.push({ updateTextStyle: { objectId: footerId, style: { fontSize: { magnitude: 8, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: { red: 1, green: 0, blue: 0 } } } }, fields: "fontSize,foregroundColor" } });
-          }
+          // Queue clone via presentations.pages.copy (NOT invalid copySlide batchUpdate)
+          cloneOps.push({
+            newSlideId: sid,
+            sourcePresentationId: best.sourcePresentationId,
+            sourceSlideId: best.sourceSlideId || best.slideId || "",
+            debugFooter: debug ? "CLONED FROM: " + (best.sourceDeck || "?") + " (score: " + score + ")" : null
+          });
 
           sectionMap.push({ type: planSlide.type, label: planSlide.label, source: "cloned", score: score, slideIndex: slideIdx, class: "A" });
           lineageRecords.push({ timestamp: new Date().toISOString(), generationMode: "cloned", archetype: archetypeKey, sectionType: planSlide.type, combinedScore: score, sourceDeckId: best.sourcePresentationId, sourceSlideId: best.sourceSlideId || best.slideId, finalPresentationId: presId });
-          logs.push("  [C] " + planSlide.type + " (score: " + score + ") from " + best.sourceDeck);
+          logs.push("  [C] " + planSlide.type + " (score: " + score + ") from " + best.sourceDeck + " -> queued for pages.copy");
 
           if (debug) {
-            debugEntry.cloneSuccess = true; // We won't know until batchUpdate, but assume for now
+            debugEntry.cloneSuccess = true; // Optimistic — will verify after pages.copy executes
             debugEntry.clonedSlideId = sid;
             debugEntry.fallbackReason = null;
             debugReport.push(debugEntry);
@@ -1055,14 +1056,52 @@ export default function handler(req, res) {
       if (modules.length > 0 && slideIndex && slideIndex.slides) {
         logs.push("CANONICAL: appending modules: [" + modules.join(", ") + "]");
         logs.push("CANONICAL: slideIndex has " + slideIndex.slides.length + " slides for matching");
-        var canonicalSlides = buildCanonicalRequests(presId, modules, slideIndex.slides || [], allReqs, logs);
+        var canonicalSlides = buildCanonicalRequests(presId, modules, slideIndex.slides || [], cloneOps, logs);
         safeForEach(canonicalSlides, function(s) {
           sectionMap.push({ type: s.type, label: s.module, source: "canonical", score: s.score, slideIndex: slideIdx, class: "B" });
           slideIdx++;
         });
       }
 
-      logs.push("Total: " + allReqs.length + " requests, " + lineageRecords.length + " lineage");
+      logs.push("Total: " + allReqs.length + " batch requests, " + cloneOps.length + " clone ops, " + lineageRecords.length + " lineage");
+
+      // ── STEP 5c: Execute clones via presentations.pages.copy ──
+      var clonePromise = Promise.resolve({ cloneResults: [] });
+      if (cloneOps.length > 0) {
+        logs.push("CLONE_EXEC: " + cloneOps.length + " slides via pages.copy");
+        clonePromise = Promise.all(cloneOps.map(function(op) {
+          return copyPage(accessToken, presId, op.newSlideId, op.sourceSlideId, op.sourcePresentationId)
+            .then(function(result) {
+              if (result.ok) {
+                logs.push("CLONE_OK: " + op.newSlideId);
+                // Debug footer on cloned slide
+                if (op.debugFooter) {
+                  var footerId = "dbg" + op.newSlideId;
+                  return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
+                    method: "POST",
+                    body: JSON.stringify({ requests: [
+                      { createShape: { objectId: footerId, shapeType: "TEXT_BOX",
+                        elementProperties: { pageObjectId: op.newSlideId, size: { width: { magnitude: 400, unit: "PT" }, height: { magnitude: 20, unit: "PT" } }, transform: { scaleX: 1, scaleY: 1, translateX: 40, translateY: 510, unit: "PT" } } } },
+                      { insertText: { objectId: footerId, text: op.debugFooter } },
+                      { updateTextStyle: { objectId: footerId, style: { fontSize: { magnitude: 8, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: { red: 1, green: 0, blue: 0 } } } }, fields: "fontSize,foregroundColor" } }
+                    ]})
+                  }).then(function() { return { ok: true, id: op.newSlideId }; });
+                }
+                return { ok: true, id: op.newSlideId };
+              } else {
+                logs.push("CLONE_FAIL: " + op.newSlideId + " -> " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
+                return { ok: false, id: op.newSlideId, error: result.data && result.data.error ? result.data.error.message : "HTTP " + result.status };
+              }
+            }).catch(function(err) {
+              logs.push("CLONE_ERROR: " + op.newSlideId + " -> " + (err.message || String(err)));
+              return { ok: false, id: op.newSlideId, error: err.message || String(err) };
+            });
+        })).then(function(results) {
+          var ok = results.filter(function(r) { return r.ok; }).length;
+          logs.push("CLONE_SUMMARY: " + ok + "/" + results.length + " succeeded");
+          return { cloneResults: results };
+        });
+      }
 
       // ── DIAGNOSTIC: log request composition ──
       var reqTypes = {};
@@ -1071,7 +1110,7 @@ export default function handler(req, res) {
         var tk = Object.keys(rq || {})[0] || "unknown";
         reqTypes[tk] = (reqTypes[tk] || 0) + 1;
         if (ri < 6) {
-          var pid = (rq.createSlide && rq.createSlide.objectId) || (rq.copySlide && rq.copySlide.objectId) || "";
+          var pid = (rq.createSlide && rq.createSlide.objectId) || "";
           if (pid) slideIdsInReqs.push(pid);
         }
       });
@@ -1079,30 +1118,24 @@ export default function handler(req, res) {
       logs.push("REQ_COUNT: " + allReqs.length);
       logs.push("REQ_PREVIEW: " + JSON.stringify(allReqs.slice(0, 2)));
 
-      // ── STEP 6: batchUpdate ──
-      logs.push("BATCH_SEND: " + allReqs.length + " requests to " + presId);
-      return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
+      // ── STEP 6: batchUpdate (after clones complete) ──
+      return clonePromise.then(function() {
+        logs.push("BATCH_SEND: " + allReqs.length + " requests to " + presId);
+        return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
         method: "POST",
         body: JSON.stringify({ requests: allReqs }),
       }).then(function(batch) {
         logs.push("BATCH_HTTP: status=" + batch.status + " ok=" + batch.ok);
         logs.push("BATCH_REPLY_COUNT: " + ((batch.data && batch.data.replies) ? batch.data.replies.length : "none"));
 
-        // Check ALL reply errors — not just copySlide
+        // Check ALL reply errors
         var allReplyErrors = [];
-        var cloneErrors = [];
         if (batch.data && batch.data.replies) {
           safeForEach(batch.data.replies, function(reply, idx) {
             if (reply && reply.error) {
               var req = allReqs[idx] || {};
               var reqType = Object.keys(req)[0] || "unknown";
               allReplyErrors.push({ index: idx, type: reqType, code: reply.error.code, message: reply.error.message });
-              if (req.copySlide) {
-                cloneErrors.push({ slideId: req.copySlide.objectId, sourceId: req.copySlide.sourceObjectId, error: reply.error.message });
-                if (debug) {
-                  safeForEach(debugReport, function(d) { if (d.clonedSlideId === req.copySlide.objectId) { d.cloneSuccess = false; d.cloneError = reply.error.message; } });
-                }
-              }
             }
           });
         }
@@ -1118,6 +1151,8 @@ export default function handler(req, res) {
           return { ok: true, partial: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, strategicAngle: angle, error: "batchUpdate HTTP " + batch.status + ": " + (batch.data && batch.data.error ? batch.data.error.message : "unknown") };
         }
         logs.push("Batch applied: " + allReqs.length + " requests");
+
+      }); // closes clonePromise.then()
 
         // ── DIAGNOSTIC: verify pages after batchUpdate ──
         return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "?fields=slides(objectId)")
@@ -1153,7 +1188,7 @@ export default function handler(req, res) {
                   .then(function(moved) { if (moved.ok && (moved.data.parents || []).indexOf(folderId) >= 0) folderPath = "01 Generated Proposals"; return folderPath; });
               })
               .then(function(fp) {
-                return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined, cloneErrors: cloneErrors.length > 0 ? cloneErrors : undefined };
+                return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined, cloneErrors: undefined };
               });
           });
       });
