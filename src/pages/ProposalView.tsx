@@ -325,8 +325,8 @@ export default function ProposalView() {
               </Card>
             )}
 
-            {/* Batch Execution Diagnostics */}
-            {batchDiagnostics && (
+            {/* Batch Execution Diagnostics — always show in debug mode */}
+            {debugMode && slidesUrl && (
               <Card className="border-amber-300 bg-amber-50/50 shadow-sm">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm text-amber-800 flex items-center gap-2">
@@ -335,46 +335,59 @@ export default function ProposalView() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-2 text-xs font-mono">
-                    {batchDiagnostics.REQ_COUNT !== undefined && (
-                      <div className="flex justify-between"><span className="text-slate-500">REQ_COUNT:</span><span className="font-bold text-amber-700">{batchDiagnostics.REQ_COUNT}</span></div>
-                    )}
-                    {batchDiagnostics.REQ_TYPES !== undefined && (
-                      <div className="flex justify-between"><span className="text-slate-500">REQ_TYPES:</span><span className="text-amber-700">{JSON.stringify(batchDiagnostics.REQ_TYPES)}</span></div>
-                    )}
-                    {batchDiagnostics.BATCH_HTTP !== undefined && (
-                      <div className="flex justify-between"><span className="text-slate-500">BATCH_HTTP:</span><span className={batchDiagnostics.BATCH_HTTP.includes("ok=true") ? "text-green-600 font-bold" : "text-red-600 font-bold"}>{batchDiagnostics.BATCH_HTTP}</span></div>
-                    )}
-                    {batchDiagnostics.BATCH_SEND !== undefined && (
-                      <div className="flex justify-between"><span className="text-slate-500">BATCH_SEND:</span><span className="text-amber-700">{batchDiagnostics.BATCH_SEND}</span></div>
-                    )}
-                    {batchDiagnostics.BATCH_REPLY_COUNT !== undefined && (
-                      <div className="flex justify-between"><span className="text-slate-500">BATCH_REPLY_COUNT:</span><span className="text-amber-700">{batchDiagnostics.BATCH_REPLY_COUNT}</span></div>
-                    )}
-                    {batchDiagnostics.BATCH_REPLY_ERRORS !== undefined && (
-                      <div>
-                        <span className="text-red-500 font-bold">BATCH_REPLY_ERRORS:</span>
-                        <pre className="text-red-600 bg-red-50 rounded p-2 mt-1 overflow-auto max-h-40">{JSON.stringify(batchDiagnostics.BATCH_REPLY_ERRORS, null, 2)}</pre>
-                      </div>
-                    )}
-                    {batchDiagnostics.PAGES_AFTER_BATCH !== undefined && (
-                      <div className="flex justify-between"><span className="text-slate-500">PAGES_AFTER_BATCH:</span><span className="text-amber-700">{batchDiagnostics.PAGES_AFTER_BATCH}</span></div>
-                    )}
-                    {batchDiagnostics.BATCH_FAILED_HTTP !== undefined && (
-                      <div className="bg-red-100 rounded p-2"><span className="text-red-600 font-bold">BATCH_FAILED_HTTP:</span><span className="text-red-700">{batchDiagnostics.BATCH_FAILED_HTTP}</span></div>
-                    )}
-                  </div>
-                  {apiError && (
-                    <div className="mt-3 bg-red-100 border border-red-300 rounded p-2 text-xs text-red-700 font-bold">
-                      API ERROR: {apiError}
+                  {/* Parsed diagnostics */}
+                  {batchDiagnostics && Object.keys(batchDiagnostics).length > 0 ? (
+                    <div className="space-y-2 text-xs font-mono mb-3">
+                      {batchDiagnostics.REQ_COUNT !== undefined && (
+                        <div className="flex justify-between"><span className="text-slate-500">REQ_COUNT:</span><span className="font-bold text-amber-700">{batchDiagnostics.REQ_COUNT}</span></div>
+                      )}
+                      {batchDiagnostics.REQ_TYPES !== undefined && (
+                        <div className="flex justify-between"><span className="text-slate-500">REQ_TYPES:</span><span className="text-amber-700">{JSON.stringify(batchDiagnostics.REQ_TYPES)}</span></div>
+                      )}
+                      {batchDiagnostics.BATCH_HTTP !== undefined && (
+                        <div className="flex justify-between"><span className="text-slate-500">BATCH_HTTP:</span><span className={String(batchDiagnostics.BATCH_HTTP).includes("ok=true") ? "text-green-600 font-bold" : "text-red-600 font-bold"}>{batchDiagnostics.BATCH_HTTP}</span></div>
+                      )}
+                      {batchDiagnostics.BATCH_SEND !== undefined && (
+                        <div className="flex justify-between"><span className="text-slate-500">BATCH_SEND:</span><span className="text-amber-700">{batchDiagnostics.BATCH_SEND}</span></div>
+                      )}
+                      {batchDiagnostics.BATCH_REPLY_COUNT !== undefined && (
+                        <div className="flex justify-between"><span className="text-slate-500">BATCH_REPLY_COUNT:</span><span className="text-amber-700">{batchDiagnostics.BATCH_REPLY_COUNT}</span></div>
+                      )}
+                      {batchDiagnostics.BATCH_REPLY_ERRORS !== undefined && (
+                        <div>
+                          <span className="text-red-500 font-bold">BATCH_REPLY_ERRORS:</span>
+                          <pre className="text-red-600 bg-red-50 rounded p-2 mt-1 overflow-auto max-h-40">{JSON.stringify(batchDiagnostics.BATCH_REPLY_ERRORS, null, 2)}</pre>
+                        </div>
+                      )}
+                      {batchDiagnostics.PAGES_AFTER_BATCH !== undefined && (
+                        <div className="flex justify-between"><span className="text-slate-500">PAGES_AFTER_BATCH:</span><span className="text-amber-700">{batchDiagnostics.PAGES_AFTER_BATCH}</span></div>
+                      )}
+                      {batchDiagnostics.BATCH_FAILED_HTTP !== undefined && (
+                        <div className="bg-red-100 rounded p-2"><span className="text-red-600 font-bold">BATCH_FAILED_HTTP:</span><span className="text-red-700">{batchDiagnostics.BATCH_FAILED_HTTP}</span></div>
+                      )}
                     </div>
+                  ) : (
+                    <div className="text-xs text-slate-500 mb-3 italic">No structured diagnostics found in logs (check raw logs below).</div>
                   )}
-                  {debugMode && apiLogs.length > 0 && (
-                    <details className="mt-3">
-                      <summary className="cursor-pointer text-xs text-slate-500 font-medium">Raw Logs ({apiLogs.length} lines)</summary>
+                  {/* data.error */}
+                  {apiError ? (
+                    <div className="mb-3 bg-red-100 border border-red-300 rounded p-2 text-xs text-red-700 font-bold font-mono">
+                      data.error: {apiError}
+                    </div>
+                  ) : (
+                    <div className="mb-3 text-xs text-green-600 font-mono">data.error: null</div>
+                  )}
+                  {/* Raw logs */}
+                  <details className="mt-2" open>
+                    <summary className="cursor-pointer text-xs text-slate-600 font-medium">
+                      Raw data.logs ({apiLogs.length} lines)
+                    </summary>
+                    {apiLogs.length > 0 ? (
                       <pre className="mt-2 text-[10px] bg-slate-900 text-slate-200 rounded p-3 overflow-auto max-h-96">{apiLogs.join("\n")}</pre>
-                    </details>
-                  )}
+                    ) : (
+                      <p className="mt-2 text-xs text-slate-400 italic">No logs returned by API.</p>
+                    )}
+                  </details>
                 </CardContent>
               </Card>
             )}
