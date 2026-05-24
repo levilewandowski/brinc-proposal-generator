@@ -423,27 +423,29 @@ function buildReferenceDNA(sectionType, archetype) {
 // and copies it directly. Never generated, never adapted.
 
 var CANONICAL_COMPONENTS_FOLDER_ID = process.env.CANONICAL_COMPONENTS_FOLDER_ID || "";
+var CANONICAL_CACHE_FOLDER_ID = process.env.CANONICAL_CACHE_FOLDER_ID || "";
 
 // ── Canonical Component Registry ─────────────────────────
-// Maps module keys to expected filenames in the canonical components folder.
-// Files are individual Google Slides assets (PPTX auto-converted on first use).
+// Maps module keys to source filenames. PPTX remains source of truth;
+// converted Google Slides versions live in the cache folder.
 var CANONICAL_COMPONENTS = {
-  brinc_intro:  { fileName: "canonical_why_brinc",             label: "Why Brinc" },
-  team:         { fileName: "canonical_diversified_portfolio", label: "Team" },
-  metrics:      { fileName: "canonical_gcc_impact",            label: "Impact Metrics" },
-  case_studies: { fileName: "canonical_upround",               label: "Case Studies" },
-  global_map:   { fileName: "canonical_global_network",        label: "Global Network" },
-  next_steps:   { fileName: "canonical_ventureverse",          label: "VentureVerse" },
+  brinc_intro:  { fileName: "canonical_why_brinc",              label: "Why Brinc" },
+  global_map:   { fileName: "canonical_global_network",         label: "Global Network" },
+  metrics:      { fileName: "canonical_gcc_impact",             label: "GCC Impact" },
+  case_studies: { fileName: "canonical_upround",                label: "Upround" },
+  next_steps:   { fileName: "canonical_ventureverse",           label: "VentureVerse" },
+  timeline:     { fileName: "canonical_accelerator_programs",   label: "Accelerator Programs" },
+  // team: no matching file yet — set componentKey: null in CANONICAL_MODULES
 };
 
 var CANONICAL_MODULES = {
-  brinc_intro:  { label: "Brinc Intro",     slideTypes: ["cover", "title_sentence", "why_brinc"], defaultOn: true,  componentKey: "brinc_intro" },
-  team:         { label: "Team",            slideTypes: ["team"],                                   defaultOn: true,  componentKey: "team" },
-  case_studies: { label: "Case Studies",    slideTypes: ["case_study"],                             defaultOn: false, componentKey: "case_studies" },
-  global_map:   { label: "Global Footprint",slideTypes: ["ecosystem"],                              defaultOn: false, componentKey: "global_map" },
-  metrics:      { label: "Metrics",         slideTypes: ["metrics"],                                defaultOn: true,  componentKey: "metrics" },
-  timeline:     { label: "Timeline",        slideTypes: ["timeline"],                               defaultOn: false, componentKey: null },
-  next_steps:   { label: "Next Steps",      slideTypes: ["next_steps"],                             defaultOn: true,  componentKey: "next_steps" },
+  brinc_intro:  { label: "Why Brinc",          slideTypes: ["cover", "title_sentence", "why_brinc"], defaultOn: true,  componentKey: "brinc_intro" },
+  team:         { label: "Team",               slideTypes: ["team"],                                   defaultOn: true,  componentKey: null },
+  case_studies: { label: "Upround",            slideTypes: ["case_study"],                             defaultOn: false, componentKey: "case_studies" },
+  global_map:   { label: "Global Network",     slideTypes: ["ecosystem"],                              defaultOn: false, componentKey: "global_map" },
+  metrics:      { label: "GCC Impact",         slideTypes: ["metrics"],                                defaultOn: true,  componentKey: "metrics" },
+  timeline:     { label: "Accelerator Programs",slideTypes: ["timeline"],                               defaultOn: false, componentKey: "timeline" },
+  next_steps:   { label: "VentureVerse",       slideTypes: ["next_steps"],                             defaultOn: true,  componentKey: "next_steps" },
 };
 
 // ── Canonical Component Discovery ────────────────────────
@@ -474,18 +476,33 @@ function scanCanonicalFolder(folderId, token, logs) {
 }
 
 // ── PPTX to Google Slides Conversion ─────────────────────
-// Converts a PPTX file to native Google Slides format via Drive API copy.
-// Returns the converted file ID.
-function convertToGoogleSlides(fileId, token, logs) {
+// Converts a PPTX file to native Google Slides via Drive API copy,
+// saves the converted file to the cache folder, returns its ID.
+function convertToGoogleSlides(fileId, fileName, cacheFolderId, token, logs) {
   return gapi(token, "https://www.googleapis.com/drive/v3/files/" + fileId + "/copy", {
     method: "POST",
-    body: JSON.stringify({ mimeType: "application/vnd.google-apps.presentation" })
+    body: JSON.stringify({ mimeType: "application/vnd.google-apps.presentation", name: fileName })
   }).then(function(result) {
-    if (result.ok && result.data && result.data.id) {
-      logs.push("CANONICAL_CONVERT: " + fileId.substring(0, 12) + "... → " + result.data.id.substring(0, 12) + "...");
-      return result.data.id;
+    if (!result.ok || !result.data || !result.data.id) {
+      throw new Error("Conversion failed: " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
     }
-    throw new Error("Conversion failed: " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
+    var convertedId = result.data.id;
+    logs.push("CANONICAL_CONVERT: " + fileName + " → " + convertedId.substring(0, 12) + "...");
+    if (cacheFolderId) {
+      // Move to cache folder
+      return gapi(token, "https://www.googleapis.com/drive/v3/files/" + convertedId + "?addParents=" + cacheFolderId + "&removeParents=" + (result.data.parents ? result.data.parents.join(",") : ""), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      }).then(function() {
+        logs.push("CANONICAL_CACHE: " + fileName + " moved to cache");
+        return convertedId;
+      }).catch(function() {
+        // Move failed — still usable in root
+        return convertedId;
+      });
+    }
+    return convertedId;
   });
 }
 
@@ -1003,8 +1020,8 @@ export default function handler(req, res) {
       var modules = body.modules || [];
       var canonicalPromise = Promise.resolve({ canonicalResults: [] });
       if (modules.length > 0 && CANONICAL_COMPONENTS_FOLDER_ID) {
-        logs.push("CANONICAL: modules=[" + modules.join(", ") + "] folder=" + CANONICAL_COMPONENTS_FOLDER_ID.substring(0, 12) + "...");
-        canonicalPromise = scanCanonicalFolder(CANONICAL_COMPONENTS_FOLDER_ID, accessToken, logs)
+        logs.push("CANONICAL: modules=[" + modules.join(", ") + "] source=" + CANONICAL_COMPONENTS_FOLDER_ID.substring(0, 12) + "... cache=" + (CANONICAL_CACHE_FOLDER_ID ? CANONICAL_CACHE_FOLDER_ID.substring(0, 12) + "..." : "none"));
+        canonicalPromise = scanCanonicalComponents(CANONICAL_CACHE_FOLDER_ID, CANONICAL_COMPONENTS_FOLDER_ID, accessToken, logs)
           .then(function(scanResults) {
             // Resolve selected modules to files
             var componentOps = [];
@@ -1030,6 +1047,7 @@ export default function handler(req, res) {
               componentOps.push({
                 newSlideId: sid,
                 fileId: fileInfo.id,
+                fileName: spec.fileName,
                 mimeType: fileInfo.mimeType,
                 module: modKey,
                 label: spec.label
@@ -1043,7 +1061,7 @@ export default function handler(req, res) {
             return Promise.all(componentOps.map(function(op) {
               var resolveFileId = (op.mimeType === "application/vnd.google-apps.presentation")
                 ? Promise.resolve(op.fileId)
-                : convertToGoogleSlides(op.fileId, accessToken, logs);
+                : convertToGoogleSlides(op.fileId, op.fileName, CANONICAL_CACHE_FOLDER_ID, accessToken, logs);
               return resolveFileId
                 .then(function(googleSlidesFileId) {
                   // Get the first slide ID from the file
