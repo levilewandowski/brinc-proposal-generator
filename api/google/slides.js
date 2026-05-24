@@ -422,68 +422,71 @@ function buildReferenceDNA(sectionType, archetype) {
 // Mapped by slide type — the retrieval engine finds the best match
 // and copies it directly. Never generated, never adapted.
 
-var CANONICAL_TEMPLATE_DECK_ID = process.env.CANONICAL_TEMPLATE_DECK_ID || "";
+var CANONICAL_COMPONENTS_FOLDER_ID = process.env.CANONICAL_COMPONENTS_FOLDER_ID || "";
 
-// ── Canonical Slide Registry ──────────────────────────────
-// Position-based mapping to the canonical template deck.
-// The template deck must have slides in this exact order.
-// Runtime discovery resolves positions to actual objectIds.
-var CANONICAL_SLIDES = {
-  brinc_intro:  { position: 0, label: "Brinc Intro",     version: 1 },
-  team:         { position: 1, label: "Team",            version: 1 },
-  metrics:      { position: 2, label: "Metrics",         version: 1 },
-  case_studies: { position: 3, label: "Case Studies",    version: 1 },
-  global_map:   { position: 4, label: "Global Footprint", version: 1 },
-  next_steps:   { position: 5, label: "Next Steps",      version: 1 },
+// ── Canonical Component Registry ─────────────────────────
+// Maps module keys to expected filenames in the canonical components folder.
+// Files are individual Google Slides assets (PPTX auto-converted on first use).
+var CANONICAL_COMPONENTS = {
+  brinc_intro:  { fileName: "canonical_why_brinc",             label: "Why Brinc" },
+  team:         { fileName: "canonical_diversified_portfolio", label: "Team" },
+  metrics:      { fileName: "canonical_gcc_impact",            label: "Impact Metrics" },
+  case_studies: { fileName: "canonical_upround",               label: "Case Studies" },
+  global_map:   { fileName: "canonical_global_network",        label: "Global Network" },
+  next_steps:   { fileName: "canonical_ventureverse",          label: "VentureVerse" },
 };
 
 var CANONICAL_MODULES = {
-  brinc_intro:  { label: "Brinc Intro",     slideTypes: ["cover", "title_sentence", "why_brinc"], defaultOn: true,  canonicalKey: "brinc_intro" },
-  team:         { label: "Team",            slideTypes: ["team"],                                   defaultOn: true,  canonicalKey: "team" },
-  case_studies: { label: "Case Studies",    slideTypes: ["case_study"],                             defaultOn: false, canonicalKey: "case_studies" },
-  global_map:   { label: "Global Footprint",slideTypes: ["ecosystem"],                              defaultOn: false, canonicalKey: "global_map" },
-  metrics:      { label: "Metrics",         slideTypes: ["metrics"],                                defaultOn: true,  canonicalKey: "metrics" },
-  timeline:     { label: "Timeline",        slideTypes: ["timeline"],                               defaultOn: false, canonicalKey: null },
-  next_steps:   { label: "Next Steps",      slideTypes: ["next_steps"],                             defaultOn: true,  canonicalKey: "next_steps" },
+  brinc_intro:  { label: "Brinc Intro",     slideTypes: ["cover", "title_sentence", "why_brinc"], defaultOn: true,  componentKey: "brinc_intro" },
+  team:         { label: "Team",            slideTypes: ["team"],                                   defaultOn: true,  componentKey: "team" },
+  case_studies: { label: "Case Studies",    slideTypes: ["case_study"],                             defaultOn: false, componentKey: "case_studies" },
+  global_map:   { label: "Global Footprint",slideTypes: ["ecosystem"],                              defaultOn: false, componentKey: "global_map" },
+  metrics:      { label: "Metrics",         slideTypes: ["metrics"],                                defaultOn: true,  componentKey: "metrics" },
+  timeline:     { label: "Timeline",        slideTypes: ["timeline"],                               defaultOn: false, componentKey: null },
+  next_steps:   { label: "Next Steps",      slideTypes: ["next_steps"],                             defaultOn: true,  componentKey: "next_steps" },
 };
 
-// ── Canonical Component Library ─────────────────────────
-// Maps selected modules to copy operations from the canonical template deck.
-// Returns lightweight specs: { newSlideId, sourceSlideId, module, label }
-function buildCanonicalOps(modules, templateSlideIds, logs) {
-  if (!modules || modules.length === 0) {
-    logs.push("CANONICAL: no modules requested");
-    return [];
-  }
-  if (!templateSlideIds || templateSlideIds.length === 0) {
-    logs.push("CANONICAL: no template deck discovered — cannot copy modules");
-    return [];
-  }
-  var ops = [];
-  safeForEach(modules, function(modKey) {
-    var mod = CANONICAL_MODULES[modKey];
-    if (!mod) { logs.push("CANONICAL: unknown module " + modKey); return; }
-    var spec = mod.canonicalKey ? CANONICAL_SLIDES[mod.canonicalKey] : null;
-    if (!spec) {
-      logs.push("CANONICAL: module=" + modKey + " has no template mapping — will be generated");
-      return;
-    }
-    var sourceSlideId = templateSlideIds[spec.position];
-    if (!sourceSlideId) {
-      logs.push("CANONICAL: module=" + modKey + " position=" + spec.position + " not found in template deck");
-      return;
-    }
-    var sid = "canonical_" + modKey + "_" + Math.random().toString(36).substring(2, 8);
-    ops.push({
-      newSlideId: sid,
-      sourceSlideId: sourceSlideId,
-      module: modKey,
-      label: spec.label
+// ── Canonical Component Discovery ────────────────────────
+// Scans the canonical components folder and returns a lookup
+// { fileName: { id, mimeType } } for all canonical_ prefixed files.
+function scanCanonicalFolder(folderId, token, logs) {
+  return gapi(token, "https://www.googleapis.com/drive/v3/files?q='" + folderId + "'+in+parents+and+name+contains+'canonical_'&fields=files(id,name,mimeType)&pageSize=100")
+    .then(function(result) {
+      var files = {};
+      if (result.data && result.data.files) {
+        // Prefer Google Slides format over PPTX when both exist
+        var byName = {};
+        result.data.files.forEach(function(f) {
+          var base = (f.name || "").toLowerCase().replace(/\\.pptx$/, "");
+          if (!base) return;
+          var isSlides = f.mimeType === "application/vnd.google-apps.presentation";
+          var isPPTX = f.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+          if (!isSlides && !isPPTX) return;
+          if (!byName[base] || isSlides) {
+            byName[base] = { id: f.id, mimeType: f.mimeType, name: base };
+          }
+        });
+        files = byName;
+      }
+      logs.push("CANONICAL_SCAN: " + Object.keys(files).length + " component(s) found");
+      return files;
     });
-    logs.push("CANONICAL: module=" + modKey + " label=" + spec.label + " sourceSlide=" + sourceSlideId.substring(0, 16) + "...");
+}
+
+// ── PPTX to Google Slides Conversion ─────────────────────
+// Converts a PPTX file to native Google Slides format via Drive API copy.
+// Returns the converted file ID.
+function convertToGoogleSlides(fileId, token, logs) {
+  return gapi(token, "https://www.googleapis.com/drive/v3/files/" + fileId + "/copy", {
+    method: "POST",
+    body: JSON.stringify({ mimeType: "application/vnd.google-apps.presentation" })
+  }).then(function(result) {
+    if (result.ok && result.data && result.data.id) {
+      logs.push("CANONICAL_CONVERT: " + fileId.substring(0, 12) + "... → " + result.data.id.substring(0, 12) + "...");
+      return result.data.id;
+    }
+    throw new Error("Conversion failed: " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
   });
-  logs.push("CANONICAL: queued " + ops.length + " module(s) from template deck");
-  return ops;
 }
 
 // ── Deck Coherence Engine ─────────────────────────────────
@@ -999,51 +1002,93 @@ export default function handler(req, res) {
       // ── STEP 5b: Canonical Component Library ──
       var modules = body.modules || [];
       var canonicalPromise = Promise.resolve({ canonicalResults: [] });
-      if (modules.length > 0 && CANONICAL_TEMPLATE_DECK_ID) {
-        logs.push("CANONICAL: modules=[" + modules.join(", ") + "] deck=" + CANONICAL_TEMPLATE_DECK_ID.substring(0, 12) + "...");
-        // Discover slide IDs from template deck, then copy selected modules
-        canonicalPromise = gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + CANONICAL_TEMPLATE_DECK_ID + "?fields=slides(objectId)")
-          .then(function(deckInfo) {
-            var templateSlideIds = (deckInfo.data && deckInfo.data.slides) ? deckInfo.data.slides.map(function(s) { return s.objectId; }) : [];
-            logs.push("CANONICAL: discovered " + templateSlideIds.length + " slide(s) in template deck");
-            var canonicalOps = buildCanonicalOps(modules, templateSlideIds, logs);
-            if (canonicalOps.length === 0) return { canonicalResults: [] };
-            // Parallel copy from single known deck — 2s timeout per slide
-            logs.push("CANONICAL_EXEC_START: " + canonicalOps.length + " module(s)");
-            var copyStart = Date.now();
-            return Promise.all(canonicalOps.map(function(op) {
-              return withTimeout(
-                gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "/pages:copy", {
-                  method: "POST",
-                  body: JSON.stringify({ objectId: op.newSlideId, pageId: op.sourceSlideId, sourcePresentationId: CANONICAL_TEMPLATE_DECK_ID })
-                }),
-                2000
-              ).then(function(result) {
-                if (result.ok) {
-                  logs.push("CANONICAL_OK: " + op.module);
-                  sectionMap.push({ type: op.module, label: op.label, source: "canonical", score: 0, slideIndex: slideIdx, class: "B" });
-                  slideIdx++;
-                  return { ok: true, module: op.module };
-                } else {
-                  logs.push("CANONICAL_FAIL: " + op.module + " -> " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
-                  return { ok: false, module: op.module, error: result.data && result.data.error ? result.data.error.message : "HTTP " + result.status };
-                }
-              }).catch(function(err) {
-                var isTimeout = err.message && err.message.indexOf("TIMEOUT") !== -1;
-                logs.push(isTimeout ? "CANONICAL_TIMEOUT: " + op.module + " after 2000ms" : "CANONICAL_ERROR: " + op.module + " -> " + (err.message || String(err)));
-                return { ok: false, module: op.module, error: err.message || String(err), timedOut: isTimeout };
+      if (modules.length > 0 && CANONICAL_COMPONENTS_FOLDER_ID) {
+        logs.push("CANONICAL: modules=[" + modules.join(", ") + "] folder=" + CANONICAL_COMPONENTS_FOLDER_ID.substring(0, 12) + "...");
+        canonicalPromise = scanCanonicalFolder(CANONICAL_COMPONENTS_FOLDER_ID, accessToken, logs)
+          .then(function(scanResults) {
+            // Resolve selected modules to files
+            var componentOps = [];
+            safeForEach(modules, function(modKey) {
+              var mod = CANONICAL_MODULES[modKey];
+              if (!mod) { logs.push("CANONICAL: unknown module " + modKey); return; }
+              var compKey = mod.componentKey;
+              if (!compKey) {
+                logs.push("CANONICAL: module=" + modKey + " has no component mapping — will be generated");
+                return;
+              }
+              var spec = CANONICAL_COMPONENTS[compKey];
+              if (!spec) {
+                logs.push("CANONICAL: module=" + modKey + " componentKey=" + compKey + " not in registry");
+                return;
+              }
+              var fileInfo = scanResults[spec.fileName];
+              if (!fileInfo) {
+                logs.push("CANONICAL_MISSING: module=" + modKey + " file=" + spec.fileName + " not found in folder");
+                return;
+              }
+              var sid = "canonical_" + modKey + "_" + Math.random().toString(36).substring(2, 8);
+              componentOps.push({
+                newSlideId: sid,
+                fileId: fileInfo.id,
+                mimeType: fileInfo.mimeType,
+                module: modKey,
+                label: spec.label
               });
+              logs.push("CANONICAL: module=" + modKey + " file=" + spec.fileName + " format=" + (fileInfo.mimeType === "application/vnd.google-apps.presentation" ? "slides" : "pptx"));
+            });
+            if (componentOps.length === 0) return { canonicalResults: [] };
+            // Convert PPTX files, get slide IDs, copy — all parallel per component
+            logs.push("CANONICAL_EXEC_START: " + componentOps.length + " module(s)");
+            var execStart = Date.now();
+            return Promise.all(componentOps.map(function(op) {
+              var resolveFileId = (op.mimeType === "application/vnd.google-apps.presentation")
+                ? Promise.resolve(op.fileId)
+                : convertToGoogleSlides(op.fileId, accessToken, logs);
+              return resolveFileId
+                .then(function(googleSlidesFileId) {
+                  // Get the first slide ID from the file
+                  return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + googleSlidesFileId + "?fields=slides(objectId)")
+                    .then(function(deckInfo) {
+                      var slideIds = (deckInfo.data && deckInfo.data.slides) ? deckInfo.data.slides.map(function(s) { return s.objectId; }) : [];
+                      if (slideIds.length === 0) {
+                        logs.push("CANONICAL_EMPTY: " + op.module + " — no slides in file");
+                        return { ok: false, module: op.module, error: "empty file" };
+                      }
+                      // Copy the first slide into the target presentation
+                      return withTimeout(
+                        gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "/pages:copy", {
+                          method: "POST",
+                          body: JSON.stringify({ objectId: op.newSlideId, pageId: slideIds[0], sourcePresentationId: googleSlidesFileId })
+                        }),
+                        2000
+                      ).then(function(result) {
+                        if (result.ok) {
+                          logs.push("CANONICAL_OK: " + op.module);
+                          sectionMap.push({ type: op.module, label: op.label, source: "canonical", score: 0, slideIndex: slideIdx, class: "B" });
+                          slideIdx++;
+                          return { ok: true, module: op.module };
+                        } else {
+                          logs.push("CANONICAL_FAIL: " + op.module + " -> " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
+                          return { ok: false, module: op.module, error: result.data && result.data.error ? result.data.error.message : "HTTP " + result.status };
+                        }
+                      });
+                    });
+                }).catch(function(err) {
+                  var isTimeout = err.message && err.message.indexOf("TIMEOUT") !== -1;
+                  logs.push(isTimeout ? "CANONICAL_TIMEOUT: " + op.module + " after 2000ms" : "CANONICAL_ERROR: " + op.module + " -> " + (err.message || String(err)));
+                  return { ok: false, module: op.module, error: err.message || String(err), timedOut: isTimeout };
+                });
             })).then(function(results) {
               var ok = results.filter(function(r) { return r.ok; }).length;
-              logs.push("CANONICAL_EXEC_DONE: " + ok + "/" + results.length + " succeeded in " + (Date.now() - copyStart) + "ms");
+              logs.push("CANONICAL_EXEC_DONE: " + ok + "/" + results.length + " succeeded in " + (Date.now() - execStart) + "ms");
               return { canonicalResults: results };
             });
           }).catch(function(err) {
-            logs.push("CANONICAL_DISCOVER_FAIL: " + (err.message || String(err)));
+            logs.push("CANONICAL_SCAN_FAIL: " + (err.message || String(err)));
             return { canonicalResults: [] };
           });
       } else if (modules.length > 0) {
-        logs.push("CANONICAL: skipped — CANONICAL_TEMPLATE_DECK_ID not configured");
+        logs.push("CANONICAL: skipped — CANONICAL_COMPONENTS_FOLDER_ID not configured");
       }
 
       logs.push("Total: " + allReqs.length + " batch requests, " + lineageRecords.length + " lineage");
