@@ -136,17 +136,6 @@ function gapi(token, url, init) {
   });
 }
 
-// Execute a single cross-presentation slide clone via presentations.pages.copy
-function copyPage(token, presId, newSlideId, sourceSlideId, sourcePresId) {
-  return gapi(token, "https://slides.googleapis.com/v1/presentations/" + presId + "/pages:copy", {
-    method: "POST",
-    body: JSON.stringify({
-      objectId: newSlideId,
-      pageId: sourceSlideId,
-      sourcePresentationId: sourcePresId
-    })
-  });
-}
 
 function textBox(id, pageId, x, y, w, h, text, style, fields) {
   var reqs = [];
@@ -433,75 +422,68 @@ function buildReferenceDNA(sectionType, archetype) {
 // Mapped by slide type — the retrieval engine finds the best match
 // and copies it directly. Never generated, never adapted.
 
-var CANONICAL_MODULES = {
-  brinc_intro:    { label: "Brinc Intro",     slideTypes: ["cover", "title_sentence", "why_brinc"],   defaultOn: true },
-  team:           { label: "Team",            slideTypes: ["team"],                                          defaultOn: true },
-  case_studies:   { label: "Case Studies",    slideTypes: ["case_study"],                                    defaultOn: false },
-  global_map:     { label: "Global Footprint",slideTypes: ["ecosystem"],                                     defaultOn: false },
-  metrics:        { label: "Metrics",         slideTypes: ["metrics"],                                       defaultOn: true },
-  timeline:       { label: "Timeline",        slideTypes: ["timeline"],                                      defaultOn: false },
-  next_steps:     { label: "Next Steps",      slideTypes: ["next_steps"],                                    defaultOn: true },
+var CANONICAL_TEMPLATE_DECK_ID = process.env.CANONICAL_TEMPLATE_DECK_ID || "";
+
+// ── Canonical Slide Registry ──────────────────────────────
+// Position-based mapping to the canonical template deck.
+// The template deck must have slides in this exact order.
+// Runtime discovery resolves positions to actual objectIds.
+var CANONICAL_SLIDES = {
+  brinc_intro:  { position: 0, label: "Brinc Intro",     version: 1 },
+  team:         { position: 1, label: "Team",            version: 1 },
+  metrics:      { position: 2, label: "Metrics",         version: 1 },
+  case_studies: { position: 3, label: "Case Studies",    version: 1 },
+  global_map:   { position: 4, label: "Global Footprint", version: 1 },
+  next_steps:   { position: 5, label: "Next Steps",      version: 1 },
 };
 
-function buildCanonicalRequests(presId, modules, slideIndex, cloneOps, logs) {
+var CANONICAL_MODULES = {
+  brinc_intro:  { label: "Brinc Intro",     slideTypes: ["cover", "title_sentence", "why_brinc"], defaultOn: true,  canonicalKey: "brinc_intro" },
+  team:         { label: "Team",            slideTypes: ["team"],                                   defaultOn: true,  canonicalKey: "team" },
+  case_studies: { label: "Case Studies",    slideTypes: ["case_study"],                             defaultOn: false, canonicalKey: "case_studies" },
+  global_map:   { label: "Global Footprint",slideTypes: ["ecosystem"],                              defaultOn: false, canonicalKey: "global_map" },
+  metrics:      { label: "Metrics",         slideTypes: ["metrics"],                                defaultOn: true,  canonicalKey: "metrics" },
+  timeline:     { label: "Timeline",        slideTypes: ["timeline"],                               defaultOn: false, canonicalKey: null },
+  next_steps:   { label: "Next Steps",      slideTypes: ["next_steps"],                             defaultOn: true,  canonicalKey: "next_steps" },
+};
+
+// ── Canonical Component Library ─────────────────────────
+// Maps selected modules to copy operations from the canonical template deck.
+// Returns lightweight specs: { newSlideId, sourceSlideId, module, label }
+function buildCanonicalOps(modules, templateSlideIds, logs) {
   if (!modules || modules.length === 0) {
     logs.push("CANONICAL: no modules requested");
     return [];
   }
-  if (!slideIndex || slideIndex.length === 0) {
-    logs.push("CANONICAL: no slide index available — cannot clone modules");
+  if (!templateSlideIds || templateSlideIds.length === 0) {
+    logs.push("CANONICAL: no template deck discovered — cannot copy modules");
     return [];
   }
-
-  logs.push("CANONICAL: building " + modules.length + " module(s) against " + slideIndex.length + " indexed slides");
-  var appendedSlides = [];
-
+  var ops = [];
   safeForEach(modules, function(modKey) {
     var mod = CANONICAL_MODULES[modKey];
     if (!mod) { logs.push("CANONICAL: unknown module " + modKey); return; }
-    logs.push("CANONICAL: module=" + modKey + " label=" + mod.label + " seeking slideTypes=[" + mod.slideTypes.join(", ") + "]");
-
-    safeForEach(mod.slideTypes, function(st) {
-      var candidates = slideIndex.filter(function(s) {
-        return s.slideType === st && s.sourcePresentationId;
-      }).sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
-
-      if (candidates.length === 0) {
-        logs.push("CANONICAL: module=" + modKey + " slideType=" + st + " | candidates=0 | REASON: no indexed slide has this type with a sourcePresentationId");
-        return;
-      }
-
-      var best = candidates[0];
-      var sid = "canonical_" + modKey + "_" + st + "_" + Math.random().toString(36).substring(2, 8);
-      var cloneAttempted = !!(best.sourcePresentationId && (best.sourceSlideId || best.slideId));
-      logs.push("CANONICAL: module=" + modKey + " slideType=" + st +
-        " | candidates=" + candidates.length +
-        " | selectedDeck=" + (best.sourceDeck || "?") +
-        " | selectedSlideId=" + (best.sourceSlideId || best.slideId || "?") +
-        " | sourcePresentationId=" + (best.sourcePresentationId ? "yes" : "no") +
-        " | cloneAttempted=" + (cloneAttempted ? "yes" : "no") +
-        " | score=" + (best.score || "?"));
-
-      if (!cloneAttempted) {
-        logs.push("CANONICAL: SKIP module=" + modKey + " — best candidate has no cloneable IDs");
-        return;
-      }
-
-      // Queue clone via presentations.pages.copy (NOT invalid copySlide batchUpdate)
-      cloneOps.push({
-        newSlideId: sid,
-        sourcePresentationId: best.sourcePresentationId,
-        sourceSlideId: best.sourceSlideId || best.slideId || "",
-        module: modKey,
-        slideType: st
-      });
-
-      appendedSlides.push({ type: st, source: "canonical", module: modKey, sourceDeck: best.sourceDeck, score: best.score || 0 });
+    var spec = mod.canonicalKey ? CANONICAL_SLIDES[mod.canonicalKey] : null;
+    if (!spec) {
+      logs.push("CANONICAL: module=" + modKey + " has no template mapping — will be generated");
+      return;
+    }
+    var sourceSlideId = templateSlideIds[spec.position];
+    if (!sourceSlideId) {
+      logs.push("CANONICAL: module=" + modKey + " position=" + spec.position + " not found in template deck");
+      return;
+    }
+    var sid = "canonical_" + modKey + "_" + Math.random().toString(36).substring(2, 8);
+    ops.push({
+      newSlideId: sid,
+      sourceSlideId: sourceSlideId,
+      module: modKey,
+      label: spec.label
     });
+    logs.push("CANONICAL: module=" + modKey + " label=" + spec.label + " sourceSlide=" + sourceSlideId.substring(0, 16) + "...");
   });
-
-  logs.push("CANONICAL: queued " + appendedSlides.length + " canonical slide(s) via pages.copy");
-  return appendedSlides;
+  logs.push("CANONICAL: queued " + ops.length + " module(s) from template deck");
+  return ops;
 }
 
 // ── Deck Coherence Engine ─────────────────────────────────
@@ -717,20 +699,6 @@ var COMPONENT_RULES = {
 
 // ── Template Cloning ──────────────────────────────────────
 
-/**
- * DEPRECATED: copySlide is not a valid batchUpdate request type.
- * Use copyPage() which calls presentations.pages.copy instead.
- * Kept for reference — will be removed in next cleanup.
- */
-function buildCloneSlideRequest(newSlideId, sourcePresentationId, sourceSlideId) {
-  return {
-    copySlide: {
-      objectId: newSlideId,
-      sourceObjectId: sourceSlideId,
-      sourcePresentationId: sourcePresentationId,
-    }
-  };
-}
 
 // ── Synthetic Content Generator ───────────────────────────
 
@@ -844,7 +812,7 @@ export default function handler(req, res) {
 
   // Hard timeout: 7s (Vercel kills at 10s)
   var startTime = Date.now();
-  var HARD_TIMEOUT_MS = 25000;
+  var HARD_TIMEOUT_MS = 7000;
   function isTimedOut(stage) {
     if (Date.now() - startTime > HARD_TIMEOUT_MS) {
       logs.push("TIMEOUT at " + stage + " after " + (Date.now() - startTime) + "ms");
@@ -902,7 +870,6 @@ export default function handler(req, res) {
       var now = Date.now();
       var slideIdx = 0;
       var allReqs = [];
-      var cloneOps = [];   // Clone operations via presentations.pages.copy
       var sectionMap = [];
 
       // ── STEP 3: COVER ──
@@ -960,35 +927,13 @@ export default function handler(req, res) {
 
         var result;
 
-        // ── ATTEMPT CLONE if score >= CLONE_THRESHOLD ──
+        // ── HIGH-SCORE RETRIEVAL (formerly clone path) ──
         if (score >= CLONE_THRESHOLD && best && best.sourcePresentationId) {
-          if (debug) { debugEntry.selectedMode = "CLONE"; debugEntry.cloneAttempted = true; }
+          if (debug) { debugEntry.selectedMode = "RETRIEVED"; debugEntry.cloneAttempted = false; }
+          // Cross-presentation cloning removed — use retrieved content instead
+          source = "retrieved";
+          logs.push("  [R→C] " + planSlide.type + " (score: " + score + ") from " + best.sourceDeck + " — using retrieved content");
 
-          // Queue clone via presentations.pages.copy (NOT invalid copySlide batchUpdate)
-          cloneOps.push({
-            newSlideId: sid,
-            sourcePresentationId: best.sourcePresentationId,
-            sourceSlideId: best.sourceSlideId || best.slideId || "",
-            debugFooter: debug ? "CLONED FROM: " + (best.sourceDeck || "?") + " (score: " + score + ")" : null
-          });
-
-          sectionMap.push({ type: planSlide.type, label: planSlide.label, source: "cloned", score: score, slideIndex: slideIdx, class: "A" });
-          lineageRecords.push({ timestamp: new Date().toISOString(), generationMode: "cloned", archetype: archetypeKey, sectionType: planSlide.type, combinedScore: score, sourceDeckId: best.sourcePresentationId, sourceSlideId: best.sourceSlideId || best.slideId, finalPresentationId: presId });
-          logs.push("  [C] " + planSlide.type + " (score: " + score + ") from " + best.sourceDeck + " -> queued for pages.copy");
-
-          if (debug) {
-            debugEntry.cloneSuccess = true; // Optimistic — will verify after pages.copy executes
-            debugEntry.clonedSlideId = sid;
-            debugEntry.fallbackReason = null;
-            debugReport.push(debugEntry);
-          }
-          return; // Skip normal builder flow
-
-        } else if (score >= CLONE_THRESHOLD && best && !best.sourcePresentationId) {
-          if (debug) { debugEntry.selectedMode = "CLONE→FALLBACK"; debugEntry.cloneAttempted = true; debugEntry.cloneSuccess = false; debugEntry.fallbackReason = "No sourcePresentationId available for copySlide"; }
-          logs.push("  [C→F] " + planSlide.type + " — no source presentation ID");
-          // Fall through to retrieved/generate
-          source = score >= RETRIEVE_THRESHOLD ? "retrieved" : "generated";
         }
 
         // ── RETRIEVE: adapt historical content ──
@@ -1051,56 +996,57 @@ export default function handler(req, res) {
         if (debug) debugReport.push({ slideNumber: slideIdx, type: planSlide.type, mode: "CANONICAL", reason: "CLASS B static slide", query: null, candidates: [], score: 0 });
       });
 
-      // ── STEP 5b: Append canonical modules (if requested) ──
+      // ── STEP 5b: Canonical Component Library ──
       var modules = body.modules || [];
-      if (modules.length > 0 && slideIndex && slideIndex.slides) {
-        logs.push("CANONICAL: appending modules: [" + modules.join(", ") + "]");
-        logs.push("CANONICAL: slideIndex has " + slideIndex.slides.length + " slides for matching");
-        var canonicalSlides = buildCanonicalRequests(presId, modules, slideIndex.slides || [], cloneOps, logs);
-        safeForEach(canonicalSlides, function(s) {
-          sectionMap.push({ type: s.type, label: s.module, source: "canonical", score: s.score, slideIndex: slideIdx, class: "B" });
-          slideIdx++;
-        });
-      }
-
-      logs.push("Total: " + allReqs.length + " batch requests, " + cloneOps.length + " clone ops, " + lineageRecords.length + " lineage");
-
-      // ── STEP 5c: Execute clones via presentations.pages.copy ──
-      var clonePromise = Promise.resolve({ cloneResults: [] });
-      if (cloneOps.length > 0) {
-        safeForEach(cloneOps, function(op, oi) {
-          logs.push("CLONE_PLAN[" + oi + "]: newSlideId=" + op.newSlideId + " sourcePres=" + op.sourcePresentationId + " sourceSlide=" + op.sourceSlideId);
-        });
-        logs.push("CLONE_EXEC_START: " + cloneOps.length + " slides");
-        var cloneStart = Date.now();
-        // Parallel clones with individual 3s timeout — one failure does not block others
-        clonePromise = Promise.all(cloneOps.map(function(op) {
-          return withTimeout(
-            copyPage(accessToken, presId, op.newSlideId, op.sourceSlideId, op.sourcePresentationId),
-            3000
-          ).then(function(result) {
-            if (result.ok) {
-              logs.push("CLONE_OK: " + op.newSlideId);
-              return { ok: true, id: op.newSlideId };
-            } else {
-              logs.push("CLONE_FAIL: " + op.newSlideId + " -> " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
-              return { ok: false, id: op.newSlideId, error: result.data && result.data.error ? result.data.error.message : "HTTP " + result.status };
-            }
+      var canonicalPromise = Promise.resolve({ canonicalResults: [] });
+      if (modules.length > 0 && CANONICAL_TEMPLATE_DECK_ID) {
+        logs.push("CANONICAL: modules=[" + modules.join(", ") + "] deck=" + CANONICAL_TEMPLATE_DECK_ID.substring(0, 12) + "...");
+        // Discover slide IDs from template deck, then copy selected modules
+        canonicalPromise = gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + CANONICAL_TEMPLATE_DECK_ID + "?fields=slides(objectId)")
+          .then(function(deckInfo) {
+            var templateSlideIds = (deckInfo.data && deckInfo.data.slides) ? deckInfo.data.slides.map(function(s) { return s.objectId; }) : [];
+            logs.push("CANONICAL: discovered " + templateSlideIds.length + " slide(s) in template deck");
+            var canonicalOps = buildCanonicalOps(modules, templateSlideIds, logs);
+            if (canonicalOps.length === 0) return { canonicalResults: [] };
+            // Parallel copy from single known deck — 2s timeout per slide
+            logs.push("CANONICAL_EXEC_START: " + canonicalOps.length + " module(s)");
+            var copyStart = Date.now();
+            return Promise.all(canonicalOps.map(function(op) {
+              return withTimeout(
+                gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "/pages:copy", {
+                  method: "POST",
+                  body: JSON.stringify({ objectId: op.newSlideId, pageId: op.sourceSlideId, sourcePresentationId: CANONICAL_TEMPLATE_DECK_ID })
+                }),
+                2000
+              ).then(function(result) {
+                if (result.ok) {
+                  logs.push("CANONICAL_OK: " + op.module);
+                  sectionMap.push({ type: op.module, label: op.label, source: "canonical", score: 0, slideIndex: slideIdx, class: "B" });
+                  slideIdx++;
+                  return { ok: true, module: op.module };
+                } else {
+                  logs.push("CANONICAL_FAIL: " + op.module + " -> " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
+                  return { ok: false, module: op.module, error: result.data && result.data.error ? result.data.error.message : "HTTP " + result.status };
+                }
+              }).catch(function(err) {
+                var isTimeout = err.message && err.message.indexOf("TIMEOUT") !== -1;
+                logs.push(isTimeout ? "CANONICAL_TIMEOUT: " + op.module + " after 2000ms" : "CANONICAL_ERROR: " + op.module + " -> " + (err.message || String(err)));
+                return { ok: false, module: op.module, error: err.message || String(err), timedOut: isTimeout };
+              });
+            })).then(function(results) {
+              var ok = results.filter(function(r) { return r.ok; }).length;
+              logs.push("CANONICAL_EXEC_DONE: " + ok + "/" + results.length + " succeeded in " + (Date.now() - copyStart) + "ms");
+              return { canonicalResults: results };
+            });
           }).catch(function(err) {
-            var isTimeout = err.message && err.message.indexOf("TIMEOUT") !== -1;
-            if (isTimeout) {
-              logs.push("CLONE_TIMEOUT: " + op.newSlideId + " after 3000ms");
-            } else {
-              logs.push("CLONE_ERROR: " + op.newSlideId + " -> " + (err.message || String(err)));
-            }
-            return { ok: false, id: op.newSlideId, error: err.message || String(err), timedOut: isTimeout };
+            logs.push("CANONICAL_DISCOVER_FAIL: " + (err.message || String(err)));
+            return { canonicalResults: [] };
           });
-        })).then(function(results) {
-          var ok = results.filter(function(r) { return r.ok; }).length;
-          logs.push("CLONE_EXEC_DONE: " + ok + "/" + results.length + " succeeded in " + (Date.now() - cloneStart) + "ms");
-          return { cloneResults: results };
-        });
+      } else if (modules.length > 0) {
+        logs.push("CANONICAL: skipped — CANONICAL_TEMPLATE_DECK_ID not configured");
       }
+
+      logs.push("Total: " + allReqs.length + " batch requests, " + lineageRecords.length + " lineage");
 
       // ── DIAGNOSTIC: log request composition ──
       var reqTypes = {};
@@ -1118,7 +1064,7 @@ export default function handler(req, res) {
       logs.push("REQ_PREVIEW: " + JSON.stringify(allReqs.slice(0, 2)));
 
       // ── STEP 6: batchUpdate (after clones complete) ──
-      return clonePromise.then(function() {
+      return canonicalPromise.then(function() {
         logs.push("BATCH_SEND: " + allReqs.length + " requests to " + presId);
         return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
         method: "POST",
@@ -1141,9 +1087,7 @@ export default function handler(req, res) {
         if (allReplyErrors.length > 0) {
           logs.push("BATCH_REPLY_ERRORS: " + JSON.stringify(allReplyErrors.slice(0, 20)));
         }
-        if (cloneErrors.length > 0) {
-          safeForEach(cloneErrors, function(e) { logs.push("CLONE ERROR: " + e.slideId + " from " + e.sourceId + " -> " + e.error); });
-        }
+        // Canonical errors are logged individually during CANONICAL_OK/FAIL/ERROR
 
         if (!batch.ok) {
           logs.push("BATCH_FAILED_HTTP: status=" + batch.status + " body=" + JSON.stringify(batch.data));
@@ -1151,7 +1095,7 @@ export default function handler(req, res) {
         }
         logs.push("Batch applied: " + allReqs.length + " requests");
 
-      }); // closes clonePromise.then()
+      }); // closes canonicalPromise.then()
 
         // ── DIAGNOSTIC: verify pages after batchUpdate ──
         return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "?fields=slides(objectId)")
