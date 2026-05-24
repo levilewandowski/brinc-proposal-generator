@@ -25,16 +25,16 @@ export default function ProposalView() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [batchDiagnostics, setBatchDiagnostics] = useState<Record<string, any> | null>(null);
   const [debugMode, setDebugMode] = useState(false);
-  const [selectedModules, setSelectedModules] = useState<string[]>(["brinc_intro", "team", "metrics", "next_steps"]);
+  const [selectedModules, setSelectedModules] = useState<string[]>(["why_brinc", "gcc_impact"]);
 
   var CANONICAL_MODULES = [
-    { key: "brinc_intro", label: "Brinc Intro", desc: "Cover + title + why Brinc" },
-    { key: "team", label: "Team", desc: "Team slides" },
-    { key: "case_studies", label: "Case Studies", desc: "Relevant portfolio companies" },
-    { key: "global_map", label: "Global Footprint", desc: "Ecosystem + locations" },
-    { key: "metrics", label: "Metrics", desc: "Performance + portfolio metrics" },
-    { key: "timeline", label: "Timeline", desc: "Program timeline" },
-    { key: "next_steps", label: "Next Steps", desc: "Contact + next actions" },
+    { key: "why_brinc",              label: "Why Brinc",             desc: "Brinc introduction" },
+    { key: "global_network",         label: "Global Network",        desc: "Global footprint" },
+    { key: "diversified_portfolio",  label: "Diversified Portfolio", desc: "Portfolio overview" },
+    { key: "accelerator_programs",   label: "Accelerator Programs",  desc: "Program structure" },
+    { key: "gcc_impact",             label: "GCC Impact",            desc: "Impact metrics" },
+    { key: "upround",                label: "Upround",               desc: "Portfolio companies" },
+    { key: "ventureverse",           label: "VentureVerse",          desc: "Deal flow platform" },
   ];
 
   if (!proposal) return (

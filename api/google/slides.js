@@ -426,26 +426,16 @@ var CANONICAL_COMPONENTS_FOLDER_ID = process.env.CANONICAL_COMPONENTS_FOLDER_ID 
 var CANONICAL_CACHE_FOLDER_ID = process.env.CANONICAL_CACHE_FOLDER_ID || "";
 
 // ── Canonical Component Registry ─────────────────────────
-// Maps module keys to source filenames. PPTX remains source of truth;
-// converted Google Slides versions live in the cache folder.
+// File-driven: each key maps to a source PPTX file in the canonical components folder.
+// Frontend sends these keys in body.modules; backend resolves them to files here.
 var CANONICAL_COMPONENTS = {
-  brinc_intro:  { fileName: "canonical_why_brinc",              label: "Why Brinc" },
-  global_map:   { fileName: "canonical_global_network",         label: "Global Network" },
-  metrics:      { fileName: "canonical_gcc_impact",             label: "GCC Impact" },
-  case_studies: { fileName: "canonical_upround",                label: "Upround" },
-  next_steps:   { fileName: "canonical_ventureverse",           label: "VentureVerse" },
-  timeline:     { fileName: "canonical_accelerator_programs",   label: "Accelerator Programs" },
-  // team: no matching file yet — set componentKey: null in CANONICAL_MODULES
-};
-
-var CANONICAL_MODULES = {
-  brinc_intro:  { label: "Why Brinc",          slideTypes: ["cover", "title_sentence", "why_brinc"], defaultOn: true,  componentKey: "brinc_intro" },
-  team:         { label: "Team",               slideTypes: ["team"],                                   defaultOn: true,  componentKey: null },
-  case_studies: { label: "Upround",            slideTypes: ["case_study"],                             defaultOn: false, componentKey: "case_studies" },
-  global_map:   { label: "Global Network",     slideTypes: ["ecosystem"],                              defaultOn: false, componentKey: "global_map" },
-  metrics:      { label: "GCC Impact",         slideTypes: ["metrics"],                                defaultOn: true,  componentKey: "metrics" },
-  timeline:     { label: "Accelerator Programs",slideTypes: ["timeline"],                               defaultOn: false, componentKey: "timeline" },
-  next_steps:   { label: "VentureVerse",       slideTypes: ["next_steps"],                             defaultOn: true,  componentKey: "next_steps" },
+  why_brinc:             { fileName: "canonical_why_brinc",             label: "Why Brinc" },
+  global_network:        { fileName: "canonical_global_network",        label: "Global Network" },
+  diversified_portfolio: { fileName: "canonical_diversified_portfolio", label: "Diversified Portfolio" },
+  accelerator_programs:  { fileName: "canonical_accelerator_programs",  label: "Accelerator Programs" },
+  gcc_impact:            { fileName: "canonical_gcc_impact",            label: "GCC Impact" },
+  upround:               { fileName: "canonical_upround",               label: "Upround" },
+  ventureverse:          { fileName: "canonical_ventureverse",          label: "VentureVerse" },
 };
 
 // ── Canonical Component Discovery ────────────────────────
@@ -1026,16 +1016,9 @@ export default function handler(req, res) {
             // Resolve selected modules to files
             var componentOps = [];
             safeForEach(modules, function(modKey) {
-              var mod = CANONICAL_MODULES[modKey];
-              if (!mod) { logs.push("CANONICAL: unknown module " + modKey); return; }
-              var compKey = mod.componentKey;
-              if (!compKey) {
-                logs.push("CANONICAL: module=" + modKey + " has no component mapping — will be generated");
-                return;
-              }
-              var spec = CANONICAL_COMPONENTS[compKey];
+              var spec = CANONICAL_COMPONENTS[modKey];
               if (!spec) {
-                logs.push("CANONICAL: module=" + modKey + " componentKey=" + compKey + " not in registry");
+                logs.push("CANONICAL: module=" + modKey + " not in registry — will be generated");
                 return;
               }
               var fileInfo = scanResults[spec.fileName];
