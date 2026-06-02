@@ -800,33 +800,53 @@ export default function handler(req, res) {
 
   // Resolve workspace and load indexes
   logs.push("AUTH_READY: " + elapsed() + "ms");
+  console.log("[SLIDES] AUTH_READY: " + elapsed() + "ms");
 
   var workspacePromise = tokenPromise.then(function() {
     logs.push("WORKSPACE_START: " + elapsed() + "ms");
-    return resolveWorkspaceRoot(accessToken, logs);
+    console.log("[SLIDES] WORKSPACE_START: " + elapsed() + "ms");
+    return withTimeout(resolveWorkspaceRoot(accessToken, logs), 5000, "WORKSPACE_ROOT");
   }).then(function(resolved) {
     logs.push("WORKSPACE_DONE: " + elapsed() + "ms root=" + (resolved.rootId ? resolved.rootId.substring(0, 12) : "none"));
+    console.log("[SLIDES] WORKSPACE_DONE: " + elapsed() + "ms");
     return resolved;
+  }).catch(function(err) {
+    logs.push("WORKSPACE_ERROR: " + (err.message || String(err)));
+    console.log("[SLIDES] WORKSPACE_ERROR: " + (err.message || String(err)));
+    return { rootId: "", rootName: "", isAutoCorrected: false };
   });
 
   var indexPromise = workspacePromise.then(function(resolved) {
     if (resolved.rootId) {
       resolvedRootId = resolved.rootId;
       logs.push("Workspace: '" + resolved.rootName + "' (autoCorrected=" + resolved.isAutoCorrected + ")");
+      console.log("[SLIDES] Workspace resolved: '" + resolved.rootName + "'");
     }
     logs.push("INDEX_LOAD_START: " + elapsed() + "ms");
-    return loadIndexFromDrive(accessToken, resolvedRootId, logs);
+    console.log("[SLIDES] INDEX_LOAD_START: " + elapsed() + "ms");
+    return withTimeout(loadIndexFromDrive(accessToken, resolvedRootId, logs), 5000, "INDEX_LOAD");
   }).then(function(idx) {
     logs.push("INDEX_LOAD_DONE: " + elapsed() + "ms files=" + (idx && idx.files ? idx.files.length : 0));
+    console.log("[SLIDES] INDEX_LOAD_DONE: " + elapsed() + "ms");
     return idx;
+  }).catch(function(err) {
+    logs.push("INDEX_LOAD_ERROR: " + (err.message || String(err)));
+    console.log("[SLIDES] INDEX_LOAD_ERROR: " + (err.message || String(err)));
+    return { files: [] };
   });
 
   var dnaPromise = workspacePromise.then(function() {
     logs.push("DNA_LOAD_START: " + elapsed() + "ms");
-    return loadDNAIndexFromDrive(accessToken, resolvedRootId, logs);
+    console.log("[SLIDES] DNA_LOAD_START: " + elapsed() + "ms");
+    return withTimeout(loadDNAIndexFromDrive(accessToken, resolvedRootId, logs), 5000, "DNA_LOAD");
   }).then(function(dna) {
     logs.push("DNA_LOAD_DONE: " + elapsed() + "ms");
+    console.log("[SLIDES] DNA_LOAD_DONE: " + elapsed() + "ms");
     return dna;
+  }).catch(function(err) {
+    logs.push("DNA_LOAD_ERROR: " + (err.message || String(err)));
+    console.log("[SLIDES] DNA_LOAD_ERROR: " + (err.message || String(err)));
+    return { files: [] };
   });
 
   // ═══════════════════════════════════════════════════════════
@@ -842,11 +862,16 @@ export default function handler(req, res) {
   function isTimedOut(stage) {
     if (elapsed() > HARD_TIMEOUT_MS) {
       logs.push("TIMEOUT at " + stage + " after " + elapsed() + "ms");
+      console.log("[SLIDES] TIMEOUT at " + stage + " after " + elapsed() + "ms");
       return true;
     }
     return false;
   }
   logs.push("START_REQUEST: " + new Date().toISOString());
+  console.log("[SLIDES] START_REQUEST: " + new Date().toISOString() + " archetype=" + archetypeKey + " modules=" + JSON.stringify(modules));
+
+  console.log("[SLIDES] START_REQUEST: " + new Date().toISOString() + " archetype=" + archetypeKey + " modules=" + JSON.stringify(body.modules || []));
+  console.log("[SLIDES] CANONICAL_COMPONENTS_FOLDER_ID=" + (CANONICAL_COMPONENTS_FOLDER_ID ? "set" : "NOT_SET") + " CANONICAL_CACHE_FOLDER_ID=" + (CANONICAL_CACHE_FOLDER_ID ? "set" : "NOT_SET"));
 
   withTimeout(Promise.all([indexPromise, dnaPromise]), 7500).then(function(results) {
     if (isTimedOut("post-index")) {
@@ -887,14 +912,17 @@ export default function handler(req, res) {
 
     // ── STEP 2: Create presentation ──
     logs.push("CREATE_PRESENTATION_START: " + elapsed() + "ms");
-    return gapi(accessToken, "https://slides.googleapis.com/v1/presentations", {
+    console.log("[SLIDES] CREATE_PRESENTATION_START: " + elapsed() + "ms");
+    return withTimeout(gapi(accessToken, "https://slides.googleapis.com/v1/presentations", {
       method: "POST",
       body: JSON.stringify({ title: title }),
-    }).then(function(created) {
-      logs.push("CREATE_PRESENTATION_DONE: " + elapsed() + "ms");
-      if (!created.ok) { logs.push("CREATE FAILED: " + (created.data && created.data.error ? created.data.error.message : "unknown")); return { ok: false, error: "Failed to create presentation: " + (created.data && created.data.error ? created.data.error.message : "unknown"), stage: "create_presentation", logs: logs }; }
+    }), 8000, "CREATE_PRESENTATION").then(function(created) {
+      logs.push("CREATE_PRESENTATION_DONE: " + elapsed() + "ms ok=" + created.ok);
+      console.log("[SLIDES] CREATE_PRESENTATION_DONE: " + elapsed() + "ms ok=" + created.ok);
+      if (!created.ok) { logs.push("CREATE FAILED: " + (created.data && created.data.error ? created.data.error.message : "unknown")); console.log("[SLIDES] CREATE FAILED: " + (created.data && created.data.error ? created.data.error.message : "unknown")); return { ok: false, error: "Failed to create presentation: " + (created.data && created.data.error ? created.data.error.message : "unknown"), stage: "create_presentation", logs: logs }; }
       var presId = created.data.presentationId;
       logs.push("Created: " + presId);
+      console.log("[SLIDES] Created presentation: " + presId);
 
       var now = Date.now();
       var slideIdx = 0;
@@ -1030,13 +1058,21 @@ export default function handler(req, res) {
       var canonicalPromise = Promise.resolve({ canonicalResults: [] });
       if (modules.length > 0 && CANONICAL_COMPONENTS_FOLDER_ID) {
         logs.push("CANONICAL: modules=[" + modules.join(", ") + "] source=" + CANONICAL_COMPONENTS_FOLDER_ID.substring(0, 12) + "... cache=" + (CANONICAL_CACHE_FOLDER_ID ? CANONICAL_CACHE_FOLDER_ID.substring(0, 12) + "..." : "none"));
-        logs.push("SCAN_COMPONENT_FOLDER_START: " + elapsed() + "ms");
-        canonicalPromise = withTimeout(
-          scanCanonicalComponents(CANONICAL_CACHE_FOLDER_ID, CANONICAL_COMPONENTS_FOLDER_ID, accessToken, logs),
-          8000,
-          "SCAN_COMPONENT_FOLDER"
-        ).then(function(scanResults) {
-          logs.push("SCAN_COMPONENT_FOLDER_DONE: " + elapsed() + "ms found=" + Object.keys(scanResults).length);
+        console.log("[SLIDES] CANONICAL: modules=[" + modules.join(", ") + "] folder=" + CANONICAL_COMPONENTS_FOLDER_ID.substring(0, 12) + "...");
+        if (typeof scanCanonicalFolder !== "function") {
+          logs.push("CANONICAL_FATAL: scanCanonicalFolder is not a function — check function name/imports");
+          console.log("[SLIDES] CANONICAL_FATAL: scanCanonicalFolder is not a function");
+          canonicalPromise = Promise.resolve({});
+        } else {
+          logs.push("SCAN_COMPONENT_FOLDER_START: " + elapsed() + "ms");
+          console.log("[SLIDES] SCAN_COMPONENT_FOLDER_START: " + elapsed() + "ms");
+          canonicalPromise = withTimeout(
+            scanCanonicalFolder(CANONICAL_COMPONENTS_FOLDER_ID, accessToken, logs),
+            8000,
+            "SCAN_COMPONENT_FOLDER"
+          ).then(function(scanResults) {
+            logs.push("SCAN_COMPONENT_FOLDER_DONE: " + elapsed() + "ms found=" + Object.keys(scanResults).length);
+            console.log("[SLIDES] SCAN_COMPONENT_FOLDER_DONE: " + elapsed() + "ms found=" + Object.keys(scanResults).length);
             // Resolve selected modules to files
             var componentOps = [];
             safeForEach(modules, function(modKey) {
@@ -1083,24 +1119,33 @@ export default function handler(req, res) {
               return resolveFileId
                 .then(function(googleSlidesFileId) {
                   // Get the first slide ID from the file
-                  logs.push("PAGES_COPY_START:" + op.module + " at " + elapsed() + "ms");
-                  return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + googleSlidesFileId + "?fields=slides(objectId)")
-                    .then(function(deckInfo) {
+                  logs.push("GET_SLIDE_IDS_START:" + op.module + " at " + elapsed() + "ms");
+                  console.log("[SLIDES] GET_SLIDE_IDS_START: " + op.module + " at " + elapsed() + "ms");
+                  return withTimeout(
+                    gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + googleSlidesFileId + "?fields=slides(objectId)"),
+                    5000,
+                    "GET_SLIDE_IDS_" + op.module
+                  ).then(function(deckInfo) {
+                    logs.push("GET_SLIDE_IDS_DONE:" + op.module + " at " + elapsed() + "ms");
+                    console.log("[SLIDES] GET_SLIDE_IDS_DONE: " + op.module + " at " + elapsed() + "ms");
                       var slideIds = (deckInfo.data && deckInfo.data.slides) ? deckInfo.data.slides.map(function(s) { return s.objectId; }) : [];
                       if (slideIds.length === 0) {
                         logs.push("CANONICAL_EMPTY: " + op.module + " — no slides in file");
                         return { ok: false, module: op.module, error: "empty file" };
                       }
                       // Copy the first slide into the target presentation
+                      logs.push("PAGES_COPY_START:" + op.module + " slideId=" + slideIds[0]);
+                      console.log("[SLIDES] PAGES_COPY_START: " + op.module + " slideId=" + slideIds[0]);
                       return withTimeout(
                         gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "/pages:copy", {
                           method: "POST",
                           body: JSON.stringify({ objectId: op.newSlideId, pageId: slideIds[0], sourcePresentationId: googleSlidesFileId })
                         }),
-                        3000,
+                        5000,
                         "PAGES_COPY_" + op.module
                       ).then(function(result) {
                         logs.push("PAGES_COPY_DONE:" + op.module + " at " + elapsed() + "ms");
+                        console.log("[SLIDES] PAGES_COPY_DONE: " + op.module + " at " + elapsed() + "ms ok=" + result.ok);
                         if (result.ok) {
                           logs.push("CANONICAL_OK: " + op.module);
                           sectionMap.push({ type: op.module, label: op.label, source: "canonical", score: 0, slideIndex: slideIdx, class: "B" });
@@ -1124,9 +1169,12 @@ export default function handler(req, res) {
             });
           }).catch(function(err) {
             logs.push("CANONICAL_SCAN_FAIL: " + (err.message || String(err)));
+            console.log("[SLIDES] CANONICAL_SCAN_FAIL: " + (err.message || String(err)));
             return { canonicalResults: [] };
           });
-      } else if (modules.length > 0) {
+        } // closes typeof scanCanonicalFolder === "function" else
+      } // closes modules.length > 0 && CANONICAL_COMPONENTS_FOLDER_ID if
+      else if (modules.length > 0) {
         logs.push("CANONICAL: skipped — CANONICAL_COMPONENTS_FOLDER_ID not configured");
       }
 
@@ -1150,15 +1198,17 @@ export default function handler(req, res) {
       // ── STEP 6: batchUpdate (after clones complete) ──
       return canonicalPromise.then(function() {
         logs.push("BATCH_UPDATE_START: " + elapsed() + "ms reqs=" + allReqs.length);
+        console.log("[SLIDES] BATCH_UPDATE_START: " + elapsed() + "ms reqs=" + allReqs.length);
         return withTimeout(
           gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + ":batchUpdate", {
             method: "POST",
             body: JSON.stringify({ requests: allReqs }),
           }),
-          8000,
+          15000,
           "BATCH_UPDATE"
         ).then(function(batch) {
           logs.push("BATCH_UPDATE_DONE: " + elapsed() + "ms");
+          console.log("[SLIDES] BATCH_UPDATE_DONE: " + elapsed() + "ms ok=" + batch.ok);
           logs.push("BATCH_HTTP: status=" + batch.status + " ok=" + batch.ok);
         logs.push("BATCH_REPLY_COUNT: " + ((batch.data && batch.data.replies) ? batch.data.replies.length : "none"));
 
@@ -1186,49 +1236,69 @@ export default function handler(req, res) {
 
         // ── DIAGNOSTIC: verify pages after batchUpdate ──
         logs.push("VERIFY_PRESENTATION_START: " + elapsed() + "ms");
-        return gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "?fields=slides(objectId)")
-          .then(function(presCheck) {
-            logs.push("VERIFY_PRESENTATION_DONE: " + elapsed() + "ms");
-            var pageIds = (presCheck.data && presCheck.data.slides) ? presCheck.data.slides.map(function(s) { return s.objectId; }) : [];
-            logs.push("PAGES_AFTER_BATCH: " + pageIds.length + " slides => [" + pageIds.join(", ") + "]");
-          }).catch(function(e) {
-            logs.push("VERIFY_PRESENTATION_ERROR: " + (e.message || String(e)) + " at " + elapsed() + "ms");
-          })
+        console.log("[SLIDES] VERIFY_PRESENTATION_START: " + elapsed() + "ms");
+        return withTimeout(
+          gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "?fields=slides(objectId)"),
+          5000,
+          "VERIFY_PRESENTATION"
+        ).then(function(presCheck) {
+          logs.push("VERIFY_PRESENTATION_DONE: " + elapsed() + "ms");
+          console.log("[SLIDES] VERIFY_PRESENTATION_DONE: " + elapsed() + "ms");
+          var pageIds = (presCheck.data && presCheck.data.slides) ? presCheck.data.slides.map(function(s) { return s.objectId; }) : [];
+          logs.push("PAGES_AFTER_BATCH: " + pageIds.length + " slides => [" + pageIds.join(", ") + "]");
+        }).catch(function(e) {
+          logs.push("VERIFY_PRESENTATION_ERROR: " + (e.message || String(e)) + " at " + elapsed() + "ms");
+          console.log("[SLIDES] VERIFY_PRESENTATION_ERROR: " + (e.message || String(e)));
+        })
           .then(function() {
             if (lineageRecords.length > 0) saveLineage(accessToken, lineageRecords, logs).catch(function(){});
 
             var folderPath = "";
             if (!resolvedRootId) {
               logs.push("REQUEST_COMPLETE: " + elapsed() + "ms (no folder move)");
+              console.log("[SLIDES] REQUEST_COMPLETE: " + elapsed() + "ms (no folder move) slides=" + slideIdx);
               return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: "", logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined };
             }
             logs.push("MOVE_TO_FOLDER_START: " + elapsed() + "ms");
-            return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?fields=parents&supportsAllDrives=true")
-              .then(function(before) {
-                var currentParents = before.data.parents || ["root"];
-                var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + resolvedRootId + "' in parents and name='01 Generated Proposals' and trashed=false");
+            console.log("[SLIDES] MOVE_TO_FOLDER_START: " + elapsed() + "ms");
+            return withTimeout(
+              gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?fields=parents&supportsAllDrives=true"),
+              5000,
+              "GET_PARENTS"
+            ).then(function(before) {
+              var currentParents = (before && before.data && before.data.parents) || ["root"];
+              var q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and '" + resolvedRootId + "' in parents and name='01 Generated Proposals' and trashed=false");
+              return withTimeout(
+                gapi(accessToken, "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,createdTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives"),
+                5000,
+                "FIND_FOLDER"
+              ).then(function(search) {
+                var found = (search.data.files || []).filter(function(f) { return f.id; });
+                if (found.length > 0) {
+                  found.sort(function(a, b) { return (a.createdTime || "").localeCompare(b.createdTime || ""); });
+                  logs.push("01 Generated Proposals: " + found.length + " found, using oldest (" + found[0].id.substring(0, 12) + "...)");
+                  return found[0].id;
+                }
+                logs.push("01 Generated Proposals: not found, creating");
+                console.log("[SLIDES] Creating 01 Generated Proposals folder");
                 return withTimeout(
-                  gapi(accessToken, "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,createdTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives"),
-                  3000,
-                  "FIND_FOLDER"
-                ).then(function(search) {
-                  var found = (search.data.files || []).filter(function(f) { return f.id; });
-                  if (found.length > 0) {
-                    found.sort(function(a, b) { return (a.createdTime || "").localeCompare(b.createdTime || ""); });
-                    logs.push("01 Generated Proposals: " + found.length + " found, using oldest (" + found[0].id.substring(0, 12) + "...)");
-                    return found[0].id;
-                  }
-                  logs.push("01 Generated Proposals: not found, creating");
-                  return gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", { method: "POST", body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [resolvedRootId] }) }).then(function(c) { return c.data.id; });
-                })
-                .then(function(folderId) {
-                  if (!folderId) return "";
-                  return gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?addParents=" + folderId + "&removeParents=" + currentParents.join(",") + "&supportsAllDrives=true&fields=id,parents", { method: "PATCH" })
-                    .then(function(moved) { if (moved.ok && (moved.data.parents || []).indexOf(folderId) >= 0) folderPath = "01 Generated Proposals"; return folderPath; });
-                })
+                  gapi(accessToken, "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", { method: "POST", body: JSON.stringify({ name: "01 Generated Proposals", mimeType: "application/vnd.google-apps.folder", parents: [resolvedRootId] }) }),
+                  5000,
+                  "CREATE_FOLDER"
+                ).then(function(c) { return c.data.id; });
+              })
+              .then(function(folderId) {
+                if (!folderId) return "";
+                return withTimeout(
+                  gapi(accessToken, "https://www.googleapis.com/drive/v3/files/" + presId + "?addParents=" + folderId + "&removeParents=" + currentParents.join(",") + "&supportsAllDrives=true&fields=id,parents", { method: "PATCH" }),
+                  5000,
+                  "MOVE_FILE"
+                ).then(function(moved) { if (moved.ok && (moved.data.parents || []).indexOf(folderId) >= 0) folderPath = "01 Generated Proposals"; return folderPath; });
+              })
                 .then(function(fp) {
                   logs.push("MOVE_TO_FOLDER_DONE: " + elapsed() + "ms");
                   logs.push("REQUEST_COMPLETE: " + elapsed() + "ms");
+                  console.log("[SLIDES] REQUEST_COMPLETE: " + elapsed() + "ms slides=" + slideIdx);
                   return { ok: true, presentationId: presId, title: title, webViewLink: "https://docs.google.com/presentation/d/" + presId + "/edit", slideCount: slideIdx, folderPath: fp, logs: logs, archetype: archetypeKey, archetypeLabel: arch.label, sectionMap: sectionMap, lineageTracked: lineageRecords.length, strategicAngle: angle, debugReport: debug ? debugReport : undefined };
                 });
               });
@@ -1239,10 +1309,19 @@ export default function handler(req, res) {
   }).then(function(result) {
     res.end(JSON.stringify(result));
   }).catch(function(err) {
-    console.error("[Slides]", err);
+    console.error("[SLIDES] FATAL_ERROR:", err && err.message ? err.message : String(err));
+    console.error("[SLIDES] Stack:", err && err.stack ? err.stack.substring(0, 500) : "no stack");
     res.statusCode = 500;
     var isTimeout = err.message && err.message.indexOf("TIMEOUT") !== -1;
-    logs.push("REQUEST_COMPLETE_ERROR: " + elapsed() + "ms error=" + (err.message || String(err)).substring(0, 100));
-    res.end(JSON.stringify({ ok: false, error: err.message, stage: isTimeout ? "timeout" : "runtime_error", elapsed: elapsed(), logs: logs || [], debugReport: debug ? debugReport : undefined }));
+    var elapsedMs = Date.now() - startTime;
+    logs.push("REQUEST_COMPLETE_ERROR: " + elapsedMs + "ms error=" + (err.message || String(err)).substring(0, 100));
+    console.log("[SLIDES] REQUEST_COMPLETE_ERROR: " + elapsedMs + "ms error=" + (err.message || String(err)).substring(0, 100));
+    var responseObj = { ok: false, error: err.message || String(err), stage: isTimeout ? "timeout" : "runtime_error", elapsed: elapsedMs, logs: logs || [] };
+    try {
+      res.end(JSON.stringify(responseObj));
+    } catch (jsonErr) {
+      console.error("[SLIDES] JSON.stringify failed:", jsonErr.message);
+      res.end(JSON.stringify({ ok: false, error: "Failed to serialize response: " + (err.message || String(err)).substring(0, 100), stage: "serialization_error" }));
+    }
   });
 }
