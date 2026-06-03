@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import JSZip from "jszip";
-import { XMLParser, XMLBuilder } from "fast-xml-parser";
+import { XMLParser } from "fast-xml-parser";
 import {
   downloadPptx,
   readSlideXml,
@@ -13,7 +13,10 @@ import {
   createPlaceholderSlideXml,
   generatePptxBuffer,
   updateContentTypes,
+  ensureContentTypeDefaults,
+  gapi,
 } from "./pptx-slide-ops.js";
+import { validatePptx } from "./pptx-validator.js";
 
 var XML_OPTS = { ignoreAttributes: false, attributeNamePrefix: "@_" };
 var parser = new XMLParser(XML_OPTS);
@@ -116,19 +119,27 @@ export async function assemble(slideSources, token, logger) {
   // 5. Build presentation.xml.rels
   await buildPresentationRels(targetZip, slideEntries);
 
-  // 6. Update content types
+  // 6. Update content types for all slide overrides
   await updateContentTypes(targetZip, slideCount);
 
-  // 7. Generate buffer
+  // 7. Ensure content type defaults for all media extensions (PNG, JPG, etc.)
+  await ensureContentTypeDefaults(targetZip);
+
+  // 8. Generate buffer
   logger.log("[ASM] Generating final PPTX with " + slideCount + " slide(s)");
   var buffer = await generatePptxBuffer(targetZip);
   logger.log("[ASM] Generated: " + buffer.length + " bytes (" + Math.round(buffer.length / 1024) + " KB)");
+
+  // 9. Validate the output
+  logger.log("[ASM] Running post-assembly validation...");
+  var validationReport = await validatePptx(buffer, logger);
 
   return {
     ok: true,
     slideCount: slideCount,
     buffer: buffer,
     sizeBytes: buffer.length,
+    validation: validationReport,
   };
 }
 
@@ -231,7 +242,6 @@ async function buildPresentationRels(zip, slideEntries) {
 async function scanCanonicalFolder(folderId, token, logger) {
   logger.log("[ASM] Scanning canonical folder: " + folderId.substring(0, 12) + "...");
 
-  var { gapi } = await import("./pptx-slide-ops.js");
   var q = "'" + folderId + "' in parents and trashed=false and (mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' or mimeType='application/vnd.google-apps.presentation')";
   var url = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q)
     + "&fields=files(id,name,mimeType,size,modifiedTime)"

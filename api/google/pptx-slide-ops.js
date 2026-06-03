@@ -76,43 +76,76 @@ export async function readSlideXml(zip, slideIndex, logger) {
   return { slideXml: slideXml, slideRels: slideRels, slideFilePath: slideFilePath };
 }
 
-// ── Media Copy ────────────────────────────────────────────
+// Relationship types that reference external files needing copy
+var EXTERNAL_REL_TYPES = [
+  "image", "audio", "video", "chart", "diagram",
+  "oleObject", "package", "slideLayout", "slideMaster", "theme",
+];
+
+function isExternalRel(relType) {
+  if (!relType) return false;
+  var t = relType.toLowerCase();
+  for (var i = 0; i < EXTERNAL_REL_TYPES.length; i++) {
+    if (t.indexOf(EXTERNAL_REL_TYPES[i]) !== -1) return true;
+  }
+  return false;
+}
+
+// ── Media Copy (comprehensive) ────────────────────────────
 
 export async function copyMedia(targetZip, sourceZip, slideRelsXml, logger) {
-  if (!slideRelsXml) return { copied: 0, missing: 0 };
+  if (!slideRelsXml) return { copied: 0, missing: 0, details: [] };
   var relDoc = parser.parse(slideRelsXml);
   var rels = relDoc["Relationships"] && relDoc["Relationships"]["Relationship"];
-  if (!rels) return { copied: 0, missing: 0 };
+  if (!rels) return { copied: 0, missing: 0, details: [] };
   if (!Array.isArray(rels)) rels = [rels];
 
-  var copied = 0, missing = 0;
+  var copied = 0, missing = 0, details = [];
   for (var i = 0; i < rels.length; i++) {
     var r = rels[i];
+    var rId = r["@_Id"] || "";
     var rType = r["@_Type"] || "";
     var rTarget = r["@_Target"] || "";
-    if (rType.indexOf("image") === -1 && rType.indexOf("media") === -1 && rType.indexOf("audio") === -1 && rType.indexOf("video") === -1) continue;
 
-    var mediaPath;
-    if (rTarget.startsWith("../")) {
-      mediaPath = "ppt/" + rTarget.replace(/^\.\.\//, "");
-    } else if (rTarget.startsWith("/")) {
-      mediaPath = rTarget.substring(1);
-    } else {
-      mediaPath = "ppt/slides/" + rTarget;
-    }
+    // Skip internal references (like notes, comments)
+    if (!isExternalRel(rType)) continue;
+    // Skip URLs (external hyperlinks)
+    if (rTarget.startsWith("http://") || rTarget.startsWith("https://")) continue;
 
-    var mediaEntry = sourceZip.file(mediaPath);
-    if (mediaEntry) {
-      var buf = await mediaEntry.async("nodebuffer");
-      targetZip.file(mediaPath, buf);
+    var resolvedPath = resolveRelPath(rTarget, "ppt/slides/");
+    var entry = sourceZip.file(resolvedPath);
+
+    if (entry) {
+      var buf = await entry.async("nodebuffer");
+      targetZip.file(resolvedPath, buf);
       copied++;
+      details.push({ id: rId, type: rType.split("/").pop(), target: rTarget, resolved: resolvedPath, status: "copied", bytes: buf.length });
     } else {
       missing++;
-      logger.log("[OPS] MISSING media: " + mediaPath);
+      details.push({ id: rId, type: rType.split("/").pop(), target: rTarget, resolved: resolvedPath, status: "missing" });
+      logger.log("[OPS] MISSING: " + resolvedPath + " (rel " + rId + ", type " + rType.split("/").pop() + ")");
     }
   }
-  logger.log("[OPS] Media copied: " + copied + ", missing: " + missing);
-  return { copied: copied, missing: missing };
+  logger.log("[OPS] External files: " + copied + " copied, " + missing + " missing");
+  return { copied: copied, missing: missing, details: details };
+}
+
+function resolveRelPath(target, baseDir) {
+  if (target.startsWith("../")) {
+    // Relative to baseDir (e.g., ppt/slides/)
+    var baseParts = baseDir.replace(/\/$/, "").split("/");
+    var targetParts = target.split("/");
+    var resultParts = baseParts.slice();
+    for (var i = 0; i < targetParts.length; i++) {
+      if (targetParts[i] === "..") { resultParts.pop(); }
+      else if (targetParts[i] !== ".") { resultParts.push(targetParts[i]); }
+    }
+    return resultParts.join("/");
+  } else if (target.startsWith("/")) {
+    return target.substring(1);
+  } else {
+    return baseDir + target;
+  }
 }
 
 // ── Create Minimal Target PPTX ────────────────────────────
@@ -205,6 +238,53 @@ export function createPlaceholderSlideXml(title, subtitle) {
 
 export async function generatePptxBuffer(zip) {
   return await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+}
+
+// ── Content Type Defaults ─────────────────────────────────
+
+var CONTENT_TYPE_DEFAULTS = {
+  "rels": "application/vnd.openxmlformats-package.relationships+xml",
+  "xml": "application/xml",
+  "png": "image/png",
+  "jpg": "image/jpeg",
+  "jpeg": "image/jpeg",
+  "gif": "image/gif",
+  "bmp": "image/bmp",
+  "svg": "image/svg+xml",
+  "emf": "image/x-emf",
+  "wmf": "image/x-wmf",
+  "tiff": "image/tiff",
+  "tif": "image/tiff",
+  "wav": "audio/wav",
+  "wma": "audio/x-ms-wma",
+  "mp3": "audio/mpeg",
+  "mp4": "video/mp4",
+  "mov": "video/quicktime",
+  "wmv": "video/x-ms-wmv",
+  "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "vsd": "application/vnd.visio",
+  "vml": "application/vnd.openxmlformats-officedocument.vmlDrawing",
+};
+
+// Ensure [Content_Types].xml has Default entries for all media extensions
+export async function ensureContentTypeDefaults(zip) {
+  var ctEntry = zip.file("[Content_Types].xml");
+  if (!ctEntry) return;
+  var ctText = await ctEntry.async("text");
+  var changed = false;
+
+  Object.keys(CONTENT_TYPE_DEFAULTS).forEach(function(ext) {
+    var pattern = 'Extension="' + ext + '"';
+    if (ctText.indexOf(pattern) === -1) {
+      var insert = '  <Default Extension="' + ext + '" ContentType="' + CONTENT_TYPE_DEFAULTS[ext] + '"/>\n';
+      ctText = ctText.replace('</Types>', insert + '</Types>');
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    zip.file("[Content_Types].xml", ctText);
+  }
 }
 
 // ── Content Types Update ──────────────────────────────────
