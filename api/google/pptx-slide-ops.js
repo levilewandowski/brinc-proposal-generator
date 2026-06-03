@@ -5,6 +5,10 @@
 
 import JSZip from "jszip";
 import { XMLParser, XMLBuilder } from "fast-xml-parser";
+import {
+  resolveRelationshipTarget,
+  packageUriToEntryName,
+} from "./opc-resolver.js";
 
 var XML_OPTS = { ignoreAttributes: false, attributeNamePrefix: "@_" };
 var parser = new XMLParser(XML_OPTS);
@@ -91,9 +95,19 @@ function isExternalRel(relType) {
   return false;
 }
 
-// ── Media Copy (comprehensive) ────────────────────────────
+// ── Media Copy (OPC-compliant) ────────────────────────────
 
-export async function copyMedia(targetZip, sourceZip, slideRelsXml, logger) {
+/**
+ * Copy external file references from slide rels into target PPTX.
+ * Uses OPC-compliant URI resolution (not string concatenation).
+ *
+ * @param targetZip       JSZip instance for output
+ * @param sourceZip       JSZip instance for input
+ * @param slideRelsXml    Text content of slide .rels file
+ * @param sourceSlideUri  Package URI of source slide (e.g., "/ppt/slides/slide1.xml")
+ * @param logger
+ */
+export async function copyMedia(targetZip, sourceZip, slideRelsXml, sourceSlideUri, logger) {
   if (!slideRelsXml) return { copied: 0, missing: 0, details: [] };
   var relDoc = parser.parse(slideRelsXml);
   var rels = relDoc["Relationships"] && relDoc["Relationships"]["Relationship"];
@@ -101,51 +115,41 @@ export async function copyMedia(targetZip, sourceZip, slideRelsXml, logger) {
   if (!Array.isArray(rels)) rels = [rels];
 
   var copied = 0, missing = 0, details = [];
+  var sourceUri = sourceSlideUri || "/ppt/slides/slide1.xml";
+
   for (var i = 0; i < rels.length; i++) {
     var r = rels[i];
     var rId = r["@_Id"] || "";
     var rType = r["@_Type"] || "";
     var rTarget = r["@_Target"] || "";
 
-    // Skip internal references (like notes, comments)
+    // Skip non-external references
     if (!isExternalRel(rType)) continue;
     // Skip URLs (external hyperlinks)
-    if (rTarget.startsWith("http://") || rTarget.startsWith("https://")) continue;
+    if (rTarget.indexOf(":") !== -1 && (rTarget.startsWith("http://") || rTarget.startsWith("https://"))) continue;
 
-    var resolvedPath = resolveRelPath(rTarget, "ppt/slides/");
-    var entry = sourceZip.file(resolvedPath);
+    // OPC-compliant resolution — the critical piece
+    var resolved = resolveRelationshipTarget(sourceUri, rTarget);
+    if (!resolved || !resolved.entryName) {
+      missing++;
+      details.push({ id: rId, type: rType.split("/").pop(), target: rTarget, resolved: null, status: "unresolved" });
+      continue;
+    }
 
+    var entry = sourceZip.file(resolved.entryName);
     if (entry) {
       var buf = await entry.async("nodebuffer");
-      targetZip.file(resolvedPath, buf);
+      targetZip.file(resolved.entryName, buf);
       copied++;
-      details.push({ id: rId, type: rType.split("/").pop(), target: rTarget, resolved: resolvedPath, status: "copied", bytes: buf.length });
+      details.push({ id: rId, type: rType.split("/").pop(), target: rTarget, resolved: resolved.entryName, status: "copied", bytes: buf.length });
     } else {
       missing++;
-      details.push({ id: rId, type: rType.split("/").pop(), target: rTarget, resolved: resolvedPath, status: "missing" });
-      logger.log("[OPS] MISSING: " + resolvedPath + " (rel " + rId + ", type " + rType.split("/").pop() + ")");
+      details.push({ id: rId, type: rType.split("/").pop(), target: rTarget, resolved: resolved.entryName, status: "missing" });
+      logger.log("[OPS] MISSING: " + resolved.entryName + " (rel " + rId + ", type " + rType.split("/").pop() + ")");
     }
   }
   logger.log("[OPS] External files: " + copied + " copied, " + missing + " missing");
   return { copied: copied, missing: missing, details: details };
-}
-
-function resolveRelPath(target, baseDir) {
-  if (target.startsWith("../")) {
-    // Relative to baseDir (e.g., ppt/slides/)
-    var baseParts = baseDir.replace(/\/$/, "").split("/");
-    var targetParts = target.split("/");
-    var resultParts = baseParts.slice();
-    for (var i = 0; i < targetParts.length; i++) {
-      if (targetParts[i] === "..") { resultParts.pop(); }
-      else if (targetParts[i] !== ".") { resultParts.push(targetParts[i]); }
-    }
-    return resultParts.join("/");
-  } else if (target.startsWith("/")) {
-    return target.substring(1);
-  } else {
-    return baseDir + target;
-  }
 }
 
 // ── Create Minimal Target PPTX ────────────────────────────

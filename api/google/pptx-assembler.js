@@ -160,8 +160,10 @@ async function mergeSingleSlide(targetZip, sourceZip, slideIndex, targetSlideNum
       var targetRelPath = "ppt/slides/_rels/slide" + targetSlideNum + ".xml.rels";
       targetZip.file(targetRelPath, slideInfo.slideRels);
 
-      // 4. Copy referenced media
-      await copyMedia(targetZip, sourceZip, slideInfo.slideRels, logger);
+      // 4. Copy referenced media using OPC-compliant resolution
+      // slideFilePath is like "ppt/slides/slide1.xml" → package URI is "/ppt/slides/slide1.xml"
+      var sourceSlideUri = "/" + slideInfo.slideFilePath;
+      await copyMedia(targetZip, sourceZip, slideInfo.slideRels, sourceSlideUri, logger);
     }
 
     // 5. Copy layout + master + theme from source if available
