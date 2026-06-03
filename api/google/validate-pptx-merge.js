@@ -387,15 +387,24 @@ export default async function handler(req, res) {
     return res.end();
   }
 
-  if (req.method !== "GET" && req.method !== "POST") {
+  // POST only — never accept tokens in URLs (browser history, logs, analytics leaks)
+  if (req.method !== "POST") {
     res.statusCode = 405;
-    return res.end(JSON.stringify({ ok: false, error: "Method not allowed" }));
+    return res.end(JSON.stringify({ ok: false, error: "Method not allowed. Use POST." }));
   }
 
-  var accessToken = req.query.accessToken || (req.body && req.body.accessToken) || "";
+  // Read token from Authorization header (preferred, secure) or body (backward compat)
+  var authHeader = req.headers.authorization || "";
+  var accessToken = "";
+  if (authHeader.toLowerCase().startsWith("bearer ")) {
+    accessToken = authHeader.substring(7).trim();
+  }
+  if (!accessToken && req.body && req.body.accessToken) {
+    accessToken = req.body.accessToken;
+  }
   if (!accessToken) {
     res.statusCode = 401;
-    return res.end(JSON.stringify({ ok: false, error: "Missing accessToken" }));
+    return res.end(JSON.stringify({ ok: false, error: "Missing Authorization: Bearer <token> header" }));
   }
 
   if (!CANONICAL_COMPONENTS_FOLDER_ID) {
