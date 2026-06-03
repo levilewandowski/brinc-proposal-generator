@@ -7,8 +7,10 @@
 
 import { assemble } from "./pptx-assembler.js";
 import { gapi } from "./pptx-slide-ops.js";
+import { getVisualMetrics, compareVisualMetrics, resolveCachedSlides } from "./pptx-visual-regression.js";
 
 var CANONICAL_COMPONENTS_FOLDER_ID = process.env.CANONICAL_COMPONENTS_FOLDER_ID || "";
+var CANONICAL_CACHE_FOLDER_ID = process.env.CANONICAL_CACHE_FOLDER_ID || "";
 
 function createLogger() {
   var logs = [];
@@ -90,14 +92,15 @@ export default async function handler(req, res) {
       }));
     }
 
-    // Upload
+    // Upload (convert to Google Slides for visual comparison)
     var uploadStart = Date.now();
     var uploadResult = null;
+    var outputPresentationId = null;
     try {
       var boundary = "-------diag_boundary_" + Date.now();
       var metadata = JSON.stringify({
-        name: "DIAGNOSTIC_" + modules.join("_") + "_" + Date.now() + ".pptx",
-        mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        name: "DIAGNOSTIC_" + modules.join("_") + "_" + Date.now(),
+        mimeType: "application/vnd.google-apps.presentation", // converts PPTX → Google Slides
       });
       var blobBody = new Blob([
         "\r\n--" + boundary + "\r\nContent-Type: application/json\r\n\r\n",
@@ -113,16 +116,89 @@ export default async function handler(req, res) {
       });
       var upData = await upRes.json();
       if (upRes.ok) {
+        outputPresentationId = upData.id;
         uploadResult = {
           id: upData.id,
           webViewLink: "https://drive.google.com/file/d/" + upData.id + "/view",
           downloadLink: "https://drive.google.com/uc?export=download&id=" + upData.id,
         };
+        logger.log("[DIAG] Uploaded + converted to Google Slides: " + upData.id.substring(0, 12));
       }
     } catch (upErr) {
       logger.log("Upload failed: " + (upErr.message || ""));
     }
     var uploadElapsed = Date.now() - uploadStart;
+
+    // Visual regression: compare output against cached canonical originals
+    var visualRegression = null;
+    if (outputPresentationId && CANONICAL_CACHE_FOLDER_ID) {
+      logger.log("[DIAG] === VISUAL REGRESSION ===");
+      var visStart = Date.now();
+      try {
+        // Get output metrics
+        var outputMetrics = await getVisualMetrics(outputPresentationId, accessToken, logger);
+
+        // Get original metrics for each canonical module
+        var originalMetrics = [];
+        for (var mi = 0; mi < modules.length; mi++) {
+          var cachedId = await resolveCachedSlides(modules[mi], CANONICAL_CACHE_FOLDER_ID, accessToken, logger);
+          if (cachedId) {
+            var metrics = await getVisualMetrics(cachedId, accessToken, logger);
+            if (metrics) originalMetrics.push({ module: modules[mi], metrics: metrics });
+          }
+        }
+
+        // Compare
+        if (originalMetrics.length > 0 && outputMetrics) {
+          // Compare first canonical against corresponding output slide
+          visualRegression = {
+            outputMetrics: {
+              presentationId: outputMetrics.presentationId,
+              slideCount: outputMetrics.slideCount,
+            },
+            comparisons: [],
+          };
+
+          for (var ci = 0; ci < originalMetrics.length; ci++) {
+            var orig = originalMetrics[ci];
+            // Map: output slide at index ci corresponds to canonical module at index ci
+            var outSlide = outputMetrics.slides[ci] || null;
+            var origSlide = orig.metrics.slides[0] || null; // canonical has 1 slide
+
+            if (origSlide && outSlide) {
+              var diff = Math.abs(origSlide.elementCount - outSlide.elementCount);
+              var max = Math.max(origSlide.elementCount, outSlide.elementCount);
+              var similarity = max > 0 ? Math.round((1 - diff / max) * 100) : 100;
+
+              visualRegression.comparisons.push({
+                module: orig.module,
+                originalElements: origSlide.elementCount,
+                outputElements: outSlide.elementCount,
+                elementSimilarity: similarity,
+                originalThumbnail: origSlide.thumbnailUrl,
+                outputThumbnail: outSlide.thumbnailUrl,
+                status: similarity >= 90 ? "match" : similarity >= 70 ? "partial" : "different",
+              });
+
+              logger.log("[VIS] " + orig.module + ": " + similarity + "% similar (" + origSlide.elementCount + " -> " + outSlide.elementCount + " elements)");
+            } else {
+              visualRegression.comparisons.push({
+                module: orig.module,
+                status: outSlide ? "original_unavailable" : "output_unavailable",
+              });
+            }
+          }
+
+          // Overall score
+          var totalSim = visualRegression.comparisons.reduce(function(sum, c) { return sum + (c.elementSimilarity || 0); }, 0);
+          visualRegression.overallSimilarity = visualRegression.comparisons.length > 0 ? Math.round(totalSim / visualRegression.comparisons.length) : 0;
+          logger.log("[VIS] Overall similarity: " + visualRegression.overallSimilarity + "%");
+        }
+      } catch (visErr) {
+        logger.log("[VIS] Visual regression error: " + (visErr.message || ""));
+      }
+      logger.log("[VIS] Visual regression took " + (Date.now() - visStart) + "ms");
+    }
 
     // Build response
     var validation = result.validation || {};
@@ -156,6 +232,7 @@ export default async function handler(req, res) {
         errors: validation.errors || [],
       },
       drive: uploadResult,
+      visualRegression: visualRegression,
       logs: logger.getLogs(),
     };
 
