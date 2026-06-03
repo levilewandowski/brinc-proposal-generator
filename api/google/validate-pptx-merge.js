@@ -43,15 +43,44 @@ function createLogger() {
 // ── Drive Operations ──────────────────────────────────────
 
 function scanCanonicalFolder(folderId, token, logger) {
-  logger.log("Scanning canonical folder: " + folderId.substring(0, 12) + "...");
-  var q = "'" + folderId + "' in parents and trashed=false and (mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' or mimeType='application/vnd.google-apps.presentation')";
-  return gapi(token, "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) + "&fields=files(id,name,mimeType,size,modifiedTime)&pageSize=100")
-    .then(function(result) {
+  logger.log("CANONICAL_FOLDER_ID=" + folderId);
+
+  // Phase 1: Broad scan — ALL files in folder (debug visibility)
+  var broadQ = "'" + folderId + "' in parents and trashed=false";
+  var broadUrl = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(broadQ)
+    + "&fields=files(id,name,mimeType,size,modifiedTime)"
+    + "&pageSize=100"
+    + "&supportsAllDrives=true"
+    + "&includeItemsFromAllDrives=true"
+    + "&corpora=allDrives";
+  logger.log("Broad query: " + broadUrl.substring(0, 200) + "...");
+
+  return gapi(token, broadUrl).then(function(broadResult) {
+    if (!broadResult.ok) {
+      logger.log("Broad scan failed: HTTP " + broadResult.status + " body=" + broadResult.body.substring(0, 300));
+    }
+    var allFiles = (broadResult.data.files || []);
+    logger.log("ALL_FILES_IN_FOLDER: " + allFiles.length);
+    allFiles.forEach(function(f) {
+      logger.log("  FILE: name=" + (f.name || "null") + " mime=" + (f.mimeType || "null") + " id=" + (f.id || "null").substring(0, 12));
+    });
+
+    // Phase 2: Filtered scan — PPTX + Google Slides only
+    var q = "'" + folderId + "' in parents and trashed=false and (mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation' or mimeType='application/vnd.google-apps.presentation')";
+    var filteredUrl = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q)
+      + "&fields=files(id,name,mimeType,size,modifiedTime)"
+      + "&pageSize=100"
+      + "&supportsAllDrives=true"
+      + "&includeItemsFromAllDrives=true"
+      + "&corpora=allDrives";
+    logger.log("Filtered query: " + filteredUrl.substring(0, 200) + "...");
+
+    return gapi(token, filteredUrl).then(function(result) {
       if (!result.ok) {
-        logger.log("Drive scan failed: HTTP " + result.status + " " + result.body.substring(0, 200));
-        return [];
+        logger.log("Filtered scan failed: HTTP " + result.status + " body=" + result.body.substring(0, 300));
+        return { allFiles: allFiles, pptxFiles: [] };
       }
-      var files = (result.data.files || []).map(function(f) {
+      var pptxFiles = (result.data.files || []).map(function(f) {
         return {
           id: f.id,
           name: f.name || "",
@@ -61,18 +90,25 @@ function scanCanonicalFolder(folderId, token, logger) {
           baseName: (f.name || "").toLowerCase().replace(/\.pptx$/, "").replace(/\.ppt$/, "").trim(),
         };
       });
-      logger.log("Found " + files.length + " presentation file(s)");
-      return files;
+      logger.log("PPTX_FILTERED_COUNT: " + pptxFiles.length);
+      return { allFiles: allFiles, pptxFiles: pptxFiles };
     });
+  });
 }
 
 function downloadFile(fileId, token, logger) {
   logger.log("Downloading: " + fileId.substring(0, 12) + "...");
-  return fetch("https://www.googleapis.com/drive/v3/files/" + fileId + "?alt=media&supportsAllDrives=true", {
+  return fetch("https://www.googleapis.com/drive/v3/files/" + fileId + "?alt=media&supportsAllDrives=true&includeItemsFromAllDrives=true", {
     headers: { Authorization: "Bearer " + token }
   }).then(function(r) {
     logger.log("Download HTTP: " + r.status);
-    if (!r.ok) throw new Error("Download failed: HTTP " + r.status);
+    if (!r.ok) {
+      var errMsg = "Download failed: HTTP " + r.status;
+      return r.text().then(function(body) {
+        logger.log("Download error body: " + body.substring(0, 200));
+        throw new Error(errMsg);
+      });
+    }
     return r.arrayBuffer();
   });
 }
@@ -414,23 +450,27 @@ export default async function handler(req, res) {
 
   var logger = createLogger();
   var reports = [];
+  var allFolderFiles = [];
+  var pptxFiles = [];
   var startTime = Date.now();
 
   try {
-    // 1. Scan canonical folder
+    // 1. Scan canonical folder (two-phase: broad + filtered)
     logger.log("=== CANONICAL FOLDER SCAN ===");
-    var files = await scanCanonicalFolder(CANONICAL_COMPONENTS_FOLDER_ID, accessToken, logger);
+    var scanResult = await scanCanonicalFolder(CANONICAL_COMPONENTS_FOLDER_ID, accessToken, logger);
+    allFolderFiles = scanResult.allFiles || [];
+    pptxFiles = scanResult.pptxFiles || [];
 
-    if (files.length === 0) {
-      res.statusCode = 404;
-      return res.end(JSON.stringify({ ok: false, error: "No PPTX files found in canonical folder", logs: logger.getLogs() }));
+    if (pptxFiles.length === 0) {
+      logger.log("WARNING: No PPTX files found after filtering");
+      logger.log("Check ALL_FILES_IN_FOLDER above — files may have unexpected mimeType");
     }
 
     // 2. Find target files
     logger.log("=== TARGET FILE MATCHING ===");
     var targets = [];
     TARGET_FILES.forEach(function(baseName) {
-      var match = files.find(function(f) { return f.baseName === baseName; });
+      var match = pptxFiles.find(function(f) { return f.baseName === baseName; });
       if (match) {
         targets.push(match);
         logger.log("MATCHED: " + baseName + " -> " + match.name + " (" + match.id.substring(0, 12) + "...)");
@@ -450,7 +490,8 @@ export default async function handler(req, res) {
     }
 
     // 4. Summary
-    var allPassed = reports.every(function(r) {
+    var hasResults = reports.length > 0;
+    var allPassed = hasResults && reports.every(function(r) {
       return r.mergeTest && r.mergeTest.shapesPreserved && r.mergeTest.imagesPreserved && r.mergeTest.textPreserved && r.mergeTest.mediaPreserved && r.errors.length === 0;
     });
 
@@ -463,12 +504,13 @@ export default async function handler(req, res) {
       logger.log("  " + r.fileName + ": " + status + " slides=" + r.slideCount + " media=" + r.mediaCount);
     });
 
-    res.statusCode = allPassed ? 200 : 207;
+    res.statusCode = hasResults ? (allPassed ? 200 : 207) : 200;
     res.end(JSON.stringify({
-      ok: allPassed,
+      ok: hasResults && allPassed,
       totalElapsedMs: Date.now() - startTime,
       folderId: CANONICAL_COMPONENTS_FOLDER_ID.substring(0, 12) + "...",
-      filesFound: files.length,
+      allFolderFiles: allFolderFiles.map(function(f) { return { name: f.name, id: f.id, mimeType: f.mimeType }; }),
+      pptxFilesFound: pptxFiles.length,
       targetsMatched: targets.length,
       targetsRequested: TARGET_FILES.length,
       reports: reports,
