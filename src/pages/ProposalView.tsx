@@ -27,6 +27,9 @@ export default function ProposalView() {
   const [debugMode, setDebugMode] = useState(false);
   const [selectedModules, setSelectedModules] = useState<string[]>(["why_brinc", "gcc_impact"]);
 
+  // Phase 1 experimental toggle: ?pptx=1 routes to PPTX-first assembly endpoint
+  const usePptxFirst = new URLSearchParams(window.location.search).get("pptx") === "1";
+
   var CANONICAL_MODULES = [
     { key: "why_brinc",              label: "Why Brinc",             desc: "Brinc introduction" },
     { key: "global_network",         label: "Global Network",        desc: "Global footprint" },
@@ -72,10 +75,11 @@ export default function ProposalView() {
         console.warn("[Library] Scan failed, using defaults:", libErr);
       }
 
-      toast.info("Creating Google Slides presentation...");
+      toast.info(usePptxFirst ? "Assembling PPTX (experimental)..." : "Creating Google Slides presentation...");
 
       // Step 2: Create slides with archetype + patterns
-      const res = await fetch("/api/google/slides", {
+      const apiEndpoint = usePptxFirst ? "/api/google/pptx-assemble" : "/api/google/slides";
+      const res = await fetch(apiEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
