@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import JSZip from "jszip";
-import { XMLParser, XMLBuilder } from "fast-xml-parser";
+import { XMLParser } from "fast-xml-parser";
 import {
   resolveRelationshipTarget,
   packageUriToEntryName,
@@ -12,7 +12,6 @@ import {
 
 var XML_OPTS = { ignoreAttributes: false, attributeNamePrefix: "@_" };
 var parser = new XMLParser(XML_OPTS);
-var builder = new XMLBuilder(XML_OPTS);
 
 // ── Drive Download ────────────────────────────────────────
 
