@@ -20,7 +20,6 @@ import { validatePptx } from "./pptx-validator.js";
 
 var XML_OPTS = { ignoreAttributes: false, attributeNamePrefix: "@_" };
 var parser = new XMLParser(XML_OPTS);
-var builder = new XMLBuilder(XML_OPTS);
 
 // ═══════════════════════════════════════════════════════════
 //  Main Assembly Orchestrator
