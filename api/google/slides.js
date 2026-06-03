@@ -450,7 +450,9 @@ function scanCanonicalFolder(folderId, token, logs) {
         // Prefer Google Slides format over PPTX when both exist
         var byName = {};
         result.data.files.forEach(function(f) {
-          var base = (f.name || "").toLowerCase().replace(/\\.pptx$/, "");
+          var base = (f.name || "").toLowerCase().trim()
+            .replace(/\.pptx$/, "")
+            .replace(/\.ppt$/, "");
           if (!base) return;
           var isSlides = f.mimeType === "application/vnd.google-apps.presentation";
           var isPPTX = f.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -461,7 +463,10 @@ function scanCanonicalFolder(folderId, token, logs) {
         });
         files = byName;
       }
-      logs.push("CANONICAL_SCAN: " + Object.keys(files).length + " component(s) found");
+      var foundKeys = Object.keys(files).sort();
+      logs.push("CANONICAL_SCAN: " + foundKeys.length + " component(s) found");
+      logs.push("CANONICAL_FOUND_KEYS: " + JSON.stringify(foundKeys));
+      console.log("[SLIDES] CANONICAL_SCAN: " + foundKeys.length + " keys=" + JSON.stringify(foundKeys));
       return files;
     });
 }
