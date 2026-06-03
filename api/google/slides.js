@@ -130,10 +130,19 @@ function lightGrayText(size) { return { fontSize: { magnitude: size, unit: "PT" 
 // ── HTTP Helper ───────────────────────────────────────────
 
 function gapi(token, url, init) {
+  console.log("[GAPI] " + (init && init.method || "GET") + " " + url.substring(0, 120));
   return fetch(url, Object.assign({}, init, {
     headers: Object.assign({}, init && init.headers, { Authorization: "Bearer " + token, "Content-Type": "application/json" }),
   })).then(function(r) {
-    return r.text().then(function(t) { return { ok: r.ok, status: r.status, data: t ? JSON.parse(t) : {} }; });
+    return r.text().then(function(t) {
+      var data = {};
+      var body = t || "";
+      var contentType = r.headers.get("content-type") || "";
+      try { data = t ? JSON.parse(t) : {}; } catch(e) {
+        console.log("[GAPI] NON-JSON response: status=" + r.status + " content-type=" + contentType + " body=" + body.substring(0, 300));
+      }
+      return { ok: r.ok, status: r.status, contentType: contentType, data: data, body: body.substring(0, 2000) };
+    });
   });
 }
 
@@ -1141,33 +1150,72 @@ export default function handler(req, res) {
                         logs.push("CANONICAL_EMPTY: " + op.module + " — no slides in file");
                         return { ok: false, module: op.module, error: "empty file" };
                       }
-                      // Copy the first slide into the target presentation
-                      logs.push("PAGES_COPY_START:" + op.module + " slideId=" + slideIds[0]);
-                      console.log("[SLIDES] PAGES_COPY_START: " + op.module + " slideId=" + slideIds[0]);
+                      // Clone slide elements from source to target via batchUpdate
+                      // pages.copy only works within the same presentation; cross-presentation
+                      // copying requires extracting elements and recreating them.
+                      logs.push("CLONE_SLIDE_START:" + op.module + " slideId=" + slideIds[0]);
+                      console.log("[SLIDES] CLONE_SLIDE_START: " + op.module + " slideId=" + slideIds[0]);
                       return withTimeout(
-                        gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + presId + "/pages:copy", {
-                          method: "POST",
-                          body: JSON.stringify({ objectId: op.newSlideId, pageId: slideIds[0], sourcePresentationId: googleSlidesFileId })
-                        }),
-                        5000,
-                        "PAGES_COPY_" + op.module
-                      ).then(function(result) {
-                        logs.push("PAGES_COPY_DONE:" + op.module + " at " + elapsed() + "ms");
-                        console.log("[SLIDES] PAGES_COPY_DONE: " + op.module + " at " + elapsed() + "ms ok=" + result.ok);
-                        if (result.ok) {
-                          logs.push("CANONICAL_OK: " + op.module);
-                          sectionMap.push({ type: op.module, label: op.label, source: "canonical", score: 0, slideIndex: slideIdx, class: "B" });
-                          slideIdx++;
-                          return { ok: true, module: op.module };
-                        } else {
-                          logs.push("CANONICAL_FAIL: " + op.module + " -> " + (result.data && result.data.error ? result.data.error.message : "HTTP " + result.status));
-                          return { ok: false, module: op.module, error: result.data && result.data.error ? result.data.error.message : "HTTP " + result.status };
+                        gapi(accessToken, "https://slides.googleapis.com/v1/presentations/" + googleSlidesFileId),
+                        8000,
+                        "GET_SOURCE_PRES_" + op.module
+                      ).then(function(srcPres) {
+                        logs.push("CLONE_GET_PRES:" + op.module + " status=" + srcPres.status + " ok=" + srcPres.ok);
+                        if (!srcPres.ok) {
+                          logs.push("CANONICAL_FAIL: " + op.module + " -> GET source pres HTTP " + srcPres.status + " body=" + srcPres.body.substring(0, 200));
+                          return { ok: false, module: op.module, error: "GET source pres HTTP " + srcPres.status };
                         }
+                        var srcSlide = (srcPres.data.slides || []).find(function(s) { return s.objectId === slideIds[0]; });
+                        if (!srcSlide) {
+                          logs.push("CANONICAL_FAIL: " + op.module + " -> slide " + slideIds[0] + " not found in source");
+                          return { ok: false, module: op.module, error: "slide not found in source" };
+                        }
+                        var targetSlideId = op.newSlideId;
+                        var cloneReqs = [];
+                        cloneReqs.push({ createSlide: { objectId: targetSlideId, slideLayoutReference: { predefinedLayout: "BLANK" } } });
+                        safeForEach(srcSlide.pageElements, function(el, idx) {
+                          var elId = targetSlideId + "_el" + idx;
+                          if (el.shape) {
+                            cloneReqs.push({ createShape: {
+                              objectId: elId,
+                              shapeType: el.shape.shapeType || "TEXT_BOX",
+                              elementProperties: { pageObjectId: targetSlideId, size: el.size, transform: el.transform }
+                            }});
+                            if (el.shape.text && el.shape.text.textElements) {
+                              var fullText = "";
+                              safeForEach(el.shape.text.textElements, function(te) {
+                                if (te.textRun && te.textRun.content) fullText += te.textRun.content;
+                              });
+                              if (fullText) cloneReqs.push({ insertText: { objectId: elId, text: fullText } });
+                            }
+                            if (el.shape.shapeProperties && el.shape.shapeProperties.shapeBackgroundFill) {
+                              cloneReqs.push({ updateShapeProperties: {
+                                objectId: elId,
+                                shapeProperties: { shapeBackgroundFill: el.shape.shapeProperties.shapeBackgroundFill },
+                                fields: "shapeBackgroundFill"
+                              }});
+                            }
+                          } else if (el.image && (el.image.sourceUrl || el.image.contentUrl)) {
+                            cloneReqs.push({ createImage: {
+                              objectId: elId,
+                              elementProperties: { pageObjectId: targetSlideId, size: el.size, transform: el.transform },
+                              sourceUrl: el.image.sourceUrl || el.image.contentUrl
+                            }});
+                          }
+                        });
+                        allReqs = allReqs.concat(cloneReqs);
+                        sectionMap.push({ type: op.module, label: op.label, source: "canonical", score: 0, slideIndex: slideIdx, class: "B" });
+                        slideIdx++;
+                        logs.push("CANONICAL_OK: " + op.module + " elements=" + (srcSlide.pageElements || []).length);
+                        console.log("[SLIDES] CANONICAL_OK: " + op.module + " elements=" + (srcSlide.pageElements || []).length);
+                        return { ok: true, module: op.module };
                       });
                     });
                 }).catch(function(err) {
                   var isTimeout = err.message && err.message.indexOf("TIMEOUT") !== -1;
-                  logs.push(isTimeout ? "CANONICAL_TIMEOUT: " + op.module + " after 2000ms" : "CANONICAL_ERROR: " + op.module + " -> " + (err.message || String(err)));
+                  var label = isTimeout ? "CANONICAL_TIMEOUT" : "CANONICAL_ERROR";
+                  logs.push(label + ": " + op.module + " -> " + (err.message || String(err)));
+                  console.log("[SLIDES] " + label + ": " + op.module + " -> " + (err.message || String(err)));
                   return { ok: false, module: op.module, error: err.message || String(err), timedOut: isTimeout };
                 });
             })).then(function(results) {
