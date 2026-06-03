@@ -23,7 +23,7 @@ export async function validatePptx(zipBuffer, logger) {
     structure: {},
     slides: [],
     media: { total: 0, missing: 0, broken: [] },
-    relationships: { total: 0, broken: [] },
+    relationships: { total: 0, broken: [], renderCriticalCount: 0 },
     editability: { textRuns: 0, shapes: 0, images: 0 },
     contentTypes: { defaults: 0, missing: [] },
     errors: [],
@@ -238,16 +238,28 @@ async function validateRelationships(zip, parser, report, logger) {
       report.relationships.total++;
       var resolved = resolveRelPath(target, relPath);
       if (!zip.file(resolved)) {
-        // May be a directory or external reference — check if it's a URL
-        report.relationships.broken.push({ relFile: relPath, rId: r["@_Id"], target: target, resolved: resolved, type: r["@_Type"] });
+        var rType = r["@_Type"] || "";
+        var isCritical = isRenderCriticalRelType(rType);
+        report.relationships.broken.push({
+          relFile: relPath,
+          rId: r["@_Id"],
+          target: target,
+          resolved: resolved,
+          type: rType,
+          typeShort: rType.split("/").pop() || "unknown",
+          renderCritical: isCritical,
+        });
+        if (isCritical) report.relationships.renderCriticalCount = (report.relationships.renderCriticalCount || 0) + 1;
       }
     }
   }
 
   if (report.relationships.broken.length > 0) {
-    logger.log("[VAL] BROKEN_RELS: " + report.relationships.broken.length + " broken relationship(s)");
+    var criticalCount = report.relationships.renderCriticalCount || 0;
+    logger.log("[VAL] BROKEN_RELS: " + report.relationships.broken.length + " total, " + criticalCount + " render-critical");
     report.relationships.broken.forEach(function(b) {
-      logger.log("[VAL]   " + b.relFile + " -> " + b.resolved + " (" + b.rId + ")");
+      var severity = b.renderCritical ? "CRITICAL" : "harmless";
+      logger.log("[VAL]   [" + severity + "] " + b.relFile + " -> " + b.resolved + " (" + b.rId + ", " + b.typeShort + ")");
     });
   }
 }
@@ -275,4 +287,33 @@ function resolveRelPath(target, basePath) {
     return target.substring(1);
   }
   return target;
+}
+
+/**
+ * Classify whether a broken relationship type is render-critical.
+ * Render-critical = visible element will show red X or broken.
+ * Harmless = metadata/optional that doesn't affect visual output.
+ */
+function isRenderCriticalRelType(relType) {
+  if (!relType) return false;
+  var t = relType.toLowerCase();
+  // CRITICAL: these directly affect visible rendering
+  var critical = [
+    "image", "chart", "diagram", "oleobject", "package",
+    "diagramdata", "diagramcolors", "diagramstyles", "diagramlayout",
+    "chartex", "chartcolorstyle", "chartstyle",
+  ];
+  for (var i = 0; i < critical.length; i++) {
+    if (t.indexOf(critical[i]) !== -1) return true;
+  }
+  // HARMLESS: these don't affect visible rendering
+  var harmless = [
+    "notesslide", "tags", "comments", "commentauthors",
+    "hyperlink", "slideuid", "ink",
+  ];
+  for (var j = 0; j < harmless.length; j++) {
+    if (t.indexOf(harmless[j]) !== -1) return false;
+  }
+  // Everything else: assume harmless (layouts, masters, themes are typically copied)
+  return false;
 }
