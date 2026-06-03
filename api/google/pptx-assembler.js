@@ -4,11 +4,9 @@
 // ═══════════════════════════════════════════════════════════
 
 import JSZip from "jszip";
-import { XMLParser } from "fast-xml-parser";
 import {
   downloadPptx,
   readSlideXml,
-  copyMedia,
   createTargetPptx,
   createPlaceholderSlideXml,
   generatePptxBuffer,
@@ -16,6 +14,7 @@ import {
   ensureContentTypeDefaults,
   gapi,
 } from "./pptx-slide-ops.js";
+import { copySlideWithDependencies } from "./pptx-slide-copy.js";
 import { validatePptx } from "./pptx-validator.js";
 
 var XML_OPTS = { ignoreAttributes: false, attributeNamePrefix: "@_" };
@@ -89,23 +88,28 @@ export async function assemble(slideSources, token, logger) {
       logger.log("[ASM] Slide " + slideNum + ": PLACEHOLDER — " + (source.title || "Generated Slide"));
 
     } else if (source.source === "canonical" && source.resolvedFileId) {
-      // Canonical slide — extract slide 0 from cached source
-      var csource = sourceZips[source.resolvedFileId];
-      var cresult = await mergeSingleSlide(targetZip, csource.zip, 0, slideNum, logger);
-      if (!cresult.ok) {
-        logger.log("[ASM] Slide " + slideNum + ": canonical merge failed — " + cresult.error);
-      } else {
-        logger.log("[ASM] Slide " + slideNum + ": CANONICAL — " + source.resolvedName);
+      // Canonical slide — copy with ALL transitive dependencies
+      try {
+        var csource = sourceZips[source.resolvedFileId];
+        var cresult = await copySlideWithDependencies(targetZip, csource.zip, "ppt/slides/slide1.xml", slideNum, logger);
+        logger.log("[ASM] Slide " + slideNum + ": CANONICAL — " + source.resolvedName + " (" + cresult.copied + " parts, " + cresult.missing + " missing)");
+        if (cresult.missing > 0) {
+          logger.log("[ASM]   Missing parts: " + cresult.missingList.join(", "));
+        }
+      } catch (cerr) {
+        logger.log("[ASM] Slide " + slideNum + ": canonical copy failed — " + (cerr.message || String(cerr)));
       }
 
     } else if (source.source === "retrieved" && source.fileId) {
-      // Retrieved slide — extract by slideIndex from cached source
-      var rsource = sourceZips[source.fileId];
-      var rresult = await mergeSingleSlide(targetZip, rsource.zip, source.slideIndex || 0, slideNum, logger);
-      if (!rresult.ok) {
-        logger.log("[ASM] Slide " + slideNum + ": retrieved merge failed — " + rresult.error);
-      } else {
-        logger.log("[ASM] Slide " + slideNum + ": RETRIEVED — " + source.fileId.substring(0, 12) + "[" + (source.slideIndex || 0) + "]");
+      // Retrieved slide — copy with ALL transitive dependencies
+      try {
+        var rsource = sourceZips[source.fileId];
+        // Determine slide file path from slideIndex
+        var rslidePath = "ppt/slides/slide" + ((source.slideIndex || 0) + 1) + ".xml";
+        var rresult = await copySlideWithDependencies(targetZip, rsource.zip, rslidePath, slideNum, logger);
+        logger.log("[ASM] Slide " + slideNum + ": RETRIEVED — " + source.fileId.substring(0, 12) + "[" + (source.slideIndex || 0) + "] (" + rresult.copied + " parts, " + rresult.missing + " missing)");
+      } catch (rerr) {
+        logger.log("[ASM] Slide " + slideNum + ": retrieved copy failed — " + (rerr.message || String(rerr)));
       }
     }
 
@@ -140,61 +144,6 @@ export async function assemble(slideSources, token, logger) {
     sizeBytes: buffer.length,
     validation: validationReport,
   };
-}
-
-// ═══════════════════════════════════════════════════════════
-//  Single Slide Merge (extract from source → insert into target)
-// ═══════════════════════════════════════════════════════════
-
-async function mergeSingleSlide(targetZip, sourceZip, slideIndex, targetSlideNum, logger) {
-  try {
-    // 1. Read slide XML from source
-    var slideInfo = await readSlideXml(sourceZip, slideIndex, logger);
-
-    // 2. Write slide XML to target
-    var targetSlidePath = "ppt/slides/slide" + targetSlideNum + ".xml";
-    targetZip.file(targetSlidePath, slideInfo.slideXml);
-
-    // 3. Write slide rels to target (if any)
-    if (slideInfo.slideRels) {
-      var targetRelPath = "ppt/slides/_rels/slide" + targetSlideNum + ".xml.rels";
-      targetZip.file(targetRelPath, slideInfo.slideRels);
-
-      // 4. Copy referenced media using OPC-compliant resolution
-      // slideFilePath is like "ppt/slides/slide1.xml" → package URI is "/ppt/slides/slide1.xml"
-      var sourceSlideUri = "/" + slideInfo.slideFilePath;
-      await copyMedia(targetZip, sourceZip, slideInfo.slideRels, sourceSlideUri, logger);
-    }
-
-    // 5. Copy layout + master + theme from source if available
-    await copyLayoutMasterTheme(targetZip, sourceZip, logger);
-
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err.message || String(err) };
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-//  Copy Layout, Master, Theme from Source
-// ═══════════════════════════════════════════════════════════
-
-async function copyLayoutMasterTheme(targetZip, sourceZip, logger) {
-  var filesToCopy = [
-    { path: "ppt/slideLayouts/slideLayout1.xml", type: "layout" },
-    { path: "ppt/slideLayouts/_rels/slideLayout1.xml.rels", type: "layout_rels" },
-    { path: "ppt/slideMasters/slideMaster1.xml", type: "master" },
-    { path: "ppt/slideMasters/_rels/slideMaster1.xml.rels", type: "master_rels" },
-    { path: "ppt/theme/theme1.xml", type: "theme" },
-  ];
-
-  for (var i = 0; i < filesToCopy.length; i++) {
-    var entry = sourceZip.file(filesToCopy[i].path);
-    if (entry && !targetZip.file(filesToCopy[i].path)) {
-      var text = await entry.async("text");
-      targetZip.file(filesToCopy[i].path, text);
-    }
-  }
 }
 
 // ═══════════════════════════════════════════════════════════
