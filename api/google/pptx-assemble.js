@@ -121,25 +121,57 @@ export default async function handler(req, res) {
     return res.end(JSON.stringify({ ok: false, error: "Method not allowed. Use POST." }));
   }
 
-  // Auth
-  var authHeader = req.headers.authorization || "";
-  var accessToken = "";
-  if (authHeader.toLowerCase().startsWith("bearer ")) {
-    accessToken = authHeader.substring(7).trim();
+  // Auth — same pattern as /api/google/slides.js
+  var body = req.body || {};
+  var accessToken = body.accessToken || "";
+  var refreshToken = body.refreshToken || "";
+
+  // Also accept from Authorization header
+  if (!accessToken) {
+    var authHeader = req.headers.authorization || "";
+    if (authHeader.toLowerCase().startsWith("bearer ")) {
+      accessToken = authHeader.substring(7).trim();
+    }
   }
-  if (!accessToken && req.body && req.body.accessToken) {
-    accessToken = req.body.accessToken;
-  }
+
   if (!accessToken) {
     res.statusCode = 401;
-    return res.end(JSON.stringify({ ok: false, error: "Missing Authorization: Bearer <token>" }));
+    return res.end(JSON.stringify({ ok: false, error: "Missing accessToken — provide in body or Authorization: Bearer header" }));
   }
 
   var logger = createLogger();
   var startTime = Date.now();
 
+  // Token refresh (mirrors slides.js logic)
+  if (refreshToken) {
+    try {
+      var tokenCheck = await gapi(accessToken, "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + accessToken);
+      if (!tokenCheck.ok) {
+        logger.log("Token invalid, refreshing...");
+        var refreshRes = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            refresh_token: refreshToken,
+            client_id: process.env.GOOGLE_CLIENT_ID || "",
+            client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
+            grant_type: "refresh_token",
+          }),
+        });
+        var refreshData = await refreshRes.json();
+        if (refreshData.access_token) {
+          accessToken = refreshData.access_token;
+          logger.log("Token refreshed successfully");
+        } else {
+          logger.log("Token refresh failed: " + (refreshData.error || "unknown"));
+        }
+      }
+    } catch (authErr) {
+      logger.log("Token check/refresh error: " + (authErr.message || ""));
+    }
+  }
+
   try {
-    var body = req.body || {};
     var title = body.title || "Brinc Proposal";
     var modules = body.modules || [];
     var archetypeKey = body.archetype || "default";
@@ -195,10 +227,13 @@ export default async function handler(req, res) {
     logger.log("=== DRIVE UPLOAD ===");
 
     // Resolve workspace for folder placement
+    // workspace.js expects a logs ARRAY with .push() — not the logger object
     var targetFolderId = null;
     try {
       var { resolveWorkspaceRoot } = await import("./workspace.js");
-      var workspace = await resolveWorkspaceRoot(accessToken, logger);
+      var wsLogs = []; // array with .push() for workspace.js compatibility
+      var workspace = await resolveWorkspaceRoot(accessToken, wsLogs);
+      wsLogs.forEach(function(entry) { logger.log(entry); }); // copy to main logger
       if (workspace.rootId) {
         targetFolderId = await resolveTargetFolder(workspace.rootId, accessToken, logger);
       }
