@@ -868,10 +868,13 @@ export default function handler(req, res) {
     return false;
   }
   logs.push("START_REQUEST: " + new Date().toISOString());
-  console.log("[SLIDES] START_REQUEST: " + new Date().toISOString() + " archetype=" + archetypeKey + " modules=" + JSON.stringify(modules));
-
-  console.log("[SLIDES] START_REQUEST: " + new Date().toISOString() + " archetype=" + archetypeKey + " modules=" + JSON.stringify(body.modules || []));
+  var modulesEarly = body.modules || [];
+  console.log("[SLIDES] START_REQUEST: " + new Date().toISOString() + " archetype=" + archetypeKey + " modules=" + JSON.stringify(modulesEarly));
   console.log("[SLIDES] CANONICAL_COMPONENTS_FOLDER_ID=" + (CANONICAL_COMPONENTS_FOLDER_ID ? "set" : "NOT_SET") + " CANONICAL_CACHE_FOLDER_ID=" + (CANONICAL_CACHE_FOLDER_ID ? "set" : "NOT_SET"));
+  if (!Array.isArray(modulesEarly)) {
+    console.log("[SLIDES] MODULES_GUARD: body.modules is not an array, coercing to []");
+    modulesEarly = [];
+  }
 
   withTimeout(Promise.all([indexPromise, dnaPromise]), 7500).then(function(results) {
     if (isTimedOut("post-index")) {
