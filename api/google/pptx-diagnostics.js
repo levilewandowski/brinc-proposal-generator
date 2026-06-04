@@ -6,6 +6,7 @@
 import { assemble } from "./pptx-assembler.js";
 import { gapi } from "./pptx-slide-ops.js";
 import { getVisualMetrics, resolveCachedSlides } from "./pptx-visual-regression.js";
+import { OpcResolver } from "./opc-resolver.js";
 
 var CANONICAL_COMPONENTS_FOLDER_ID = process.env.CANONICAL_COMPONENTS_FOLDER_ID || "";
 var CANONICAL_CACHE_FOLDER_ID = process.env.CANONICAL_CACHE_FOLDER_ID || "";
@@ -156,6 +157,59 @@ export default async function handler(req, res) {
 
     logger.log("Assembly: " + result.slideCount + " slides, " + Math.round(result.sizeBytes / 1024) + " KB in " + asmElapsed + "ms");
 
+    // ── Relationship inventory (render-critical only) ─────
+    logger.log("--- RELATIONSHIP INVENTORY ---");
+    var relInventory = [];
+    var typeSummary = {};
+    try {
+      var JSZipModule = await import("jszip");
+      var JSZip = JSZipModule.default || JSZipModule;
+      var auditZip = await JSZip.loadAsync(result.buffer);
+      var resolver = new OpcResolver(auditZip);
+      await resolver.load();
+
+      var allRels = resolver.getMediaReferences();
+      // Also get all relationships (not just media) to find broken ones
+      var broken = resolver.getBrokenRelationships();
+
+      logger.log("Total broken relationships: " + broken.length);
+
+      broken.forEach(function(b) {
+        var typeShort = b.typeShort || "unknown";
+        var isCritical = isRenderCriticalRelType(b.type);
+
+        if (!typeSummary[typeShort]) typeSummary[typeShort] = { total: 0, critical: 0, missing: 0 };
+        typeSummary[typeShort].total++;
+        if (isCritical) typeSummary[typeShort].critical++;
+        typeSummary[typeShort].missing++;
+
+        var entry = {
+          slide: getSlideFromPartUri(b.sourcePart),
+          rId: b.rId,
+          type: typeShort,
+          source: b.sourcePart,
+          target: b.target,
+          resolved: b.resolvedEntryName,
+          exists: false,
+          renderCritical: isCritical,
+        };
+        relInventory.push(entry);
+
+        if (isCritical) {
+          logger.log("RENDER_CRITICAL: slide=" + entry.slide + " rId=" + b.rId + " type=" + typeShort + " target=" + b.target + " resolved=" + b.resolvedEntryName + " exists=false");
+        }
+      });
+
+      // Summary
+      logger.log("--- TYPE SUMMARY ---");
+      Object.keys(typeSummary).sort().forEach(function(t) {
+        var s = typeSummary[t];
+        logger.log(t + ": total=" + s.total + " critical=" + s.critical + " missing=" + s.missing);
+      });
+    } catch (invErr) {
+      logger.log("Inventory error: " + (invErr && invErr.message ? invErr.message : ""));
+    }
+
     // ── Upload to Drive (as Google Slides conversion) ─────
     logger.log("--- UPLOAD ---");
     var uploadStart = Date.now();
@@ -300,6 +354,8 @@ export default async function handler(req, res) {
       },
       drive: uploadResult,
       visualRegression: visualRegression,
+      relInventory: relInventory,
+      typeSummary: typeSummary,
       logs: logger.getLogs(),
     };
 
@@ -317,4 +373,22 @@ export default async function handler(req, res) {
       logs: logs,
     });
   }
+}
+
+// ── Helpers ───────────────────────────────────────────────
+
+function isRenderCriticalRelType(relType) {
+  if (!relType) return false;
+  var t = relType.toLowerCase();
+  var critical = ["image", "chart", "diagram", "oleobject", "package", "diagramdata", "diagramcolors", "diagramstyles", "diagramlayout", "chartex", "chartcolorstyle", "chartstyle"];
+  for (var i = 0; i < critical.length; i++) {
+    if (t.indexOf(critical[i]) !== -1) return true;
+  }
+  return false;
+}
+
+function getSlideFromPartUri(partUri) {
+  if (!partUri) return "unknown";
+  var match = partUri.match(/slide(\d+)\.xml/);
+  return match ? "slide" + match[1] : partUri;
 }
