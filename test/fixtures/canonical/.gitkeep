@@ -1,0 +1,7 @@
+# Place canonical PPTX fixture files in this directory.
+# Files are gitignored — this .gitkeep ensures the directory exists.
+#
+# Required files:
+#   canonical_why_brinc.pptx
+#   canonical_gcc_impact.pptx
+#   canonical_global_network.pptx

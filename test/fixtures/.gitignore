@@ -1,0 +1,2 @@
+# Ignore actual fixture files (they are binary blobs, not source)
+canonical/*.pptx

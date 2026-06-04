@@ -26,6 +26,7 @@ try {
 
 // ── Configuration ─────────────────────────────────────────
 
+const ACCESS_TOKEN     = process.env.GOOGLE_ACCESS_TOKEN || "";
 const REFRESH_TOKEN    = process.env.GOOGLE_REFRESH_TOKEN || "";
 const DEPLOY_URL       = (process.argv.includes("--deploy-url") 
                          ? process.argv[process.argv.indexOf("--deploy-url") + 1]
@@ -72,16 +73,36 @@ function logDivider(title) {
 }
 
 async function fetchJson(url, opts) {
-  const res = await fetch(url, opts);
-  const text = await res.text();
-  let data = null;
-  try { data = JSON.parse(text); } catch(e) {}
-  return { ok: res.ok, status: res.status, data: data, text: text };
+  try {
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch(e) {}
+    return { ok: res.ok, status: res.status, data: data, text: text };
+  } catch (fetchErr) {
+    return { ok: false, status: 0, data: null, text: "", error: fetchErr.message || String(fetchErr) };
+  }
 }
 
-// ── Auth: Refresh token → access token ────────────────────
+// ── Auth: Use direct access token, or refresh if needed ───
 
 async function getAccessToken() {
+  // 1. Use direct access token if available
+  if (ACCESS_TOKEN) {
+    log("AUTH", "Using direct access token from env (" + ACCESS_TOKEN.substring(0, 12) + "...)");
+    return ACCESS_TOKEN;
+  }
+
+  // 2. Fall back to refresh token exchange
+  if (!REFRESH_TOKEN) {
+    console.error(C.red("ERROR: No GOOGLE_ACCESS_TOKEN or GOOGLE_REFRESH_TOKEN set."));
+    console.error("");
+    console.error("Add to .env.test:");
+    console.error(C.cyan("  GOOGLE_ACCESS_TOKEN=ya29..."));
+    console.error(C.cyan("  GOOGLE_REFRESH_TOKEN=1//..."));
+    return null;
+  }
+
   log("AUTH", "Exchanging refresh token for access token...");
   const result = await fetchJson("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -123,6 +144,7 @@ async function runDiagnostics(accessToken) {
 
   if (!result.ok) {
     console.error(C.red("DIAGNOSTICS HTTP ERROR:"), result.status);
+    if (result.error) console.error(C.red("  Fetch error:"), result.error);
     if (result.data?.error) console.error(C.red("  Server error:"), result.data.error);
     return null;
   }
@@ -236,18 +258,16 @@ async function main() {
   console.log("Mode:       " + (RUN_ONCE ? C.yellow("single-run") : C.yellow("loop-until-PASS")));
   console.log("");
 
-  if (!REFRESH_TOKEN) {
-    console.error(C.red("ERROR: GOOGLE_REFRESH_TOKEN is not set."));
+  if (!ACCESS_TOKEN && !REFRESH_TOKEN) {
+    console.error(C.red("ERROR: No GOOGLE_ACCESS_TOKEN or GOOGLE_REFRESH_TOKEN set."));
     console.error("");
-    console.error("One-time setup required:");
-    console.error("  1. Log into the app in your browser");
-    console.error("  2. Open DevTools → Application → LocalStorage");
-    console.error("  3. Find googleTokens.refresh_token");
-    console.error("  4. Create a .env.test file in project root:");
+    console.error("Create .env.test in project root:");
+    console.error(C.cyan("  GOOGLE_ACCESS_TOKEN=ya29..."));
+    console.error(C.cyan("  GOOGLE_REFRESH_TOKEN=1//...  (fallback if access token expires)"));
+    console.error(C.cyan("  DEPLOYMENT_URL=" + DEPLOY_URL));
     console.error("");
-    console.error(C.cyan("     GOOGLE_REFRESH_TOKEN=<paste-here>"));
-    console.error(C.cyan("     DEPLOYMENT_URL=" + DEPLOY_URL));
-    console.error("");
+    console.error("These are used ONLY for autonomous PPTX engine testing.");
+    console.error(".env.test is gitignored and will never be committed.");
     process.exit(1);
   }
 
