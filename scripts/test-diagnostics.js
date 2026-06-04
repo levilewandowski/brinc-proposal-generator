@@ -35,7 +35,7 @@ const DEPLOY_URL       = (process.argv.includes("--deploy-url")
 const CLIENT_ID        = process.env.GOOGLE_CLIENT_ID 
                        || process.env.VITE_GOOGLE_CLIENT_ID 
                        || "711074142580-2lh3uth8dn38hjmoth12roi8uomdaak2.apps.googleusercontent.com";
-const CLIENT_SECRET    = process.env.GOOGLE_CLIENT_SECRET || "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";
+const CLIENT_SECRET    = process.env.GOOGLE_CLIENT_SECRET || "";
 const MAX_RETRIES      = parseInt(process.env.MAX_RETRIES || "30", 10);
 const RETRY_DELAY_MS   = parseInt(process.env.RETRY_DELAY_MS || "15000", 10);
 const RUN_ONCE         = process.argv.includes("--once");
@@ -100,6 +100,11 @@ async function getAccessToken() {
     console.error("Add to .env.test:");
     console.error(C.cyan("  GOOGLE_ACCESS_TOKEN=ya29..."));
     console.error(C.cyan("  GOOGLE_REFRESH_TOKEN=1//..."));
+    return null;
+  }
+
+  if (!CLIENT_SECRET) {
+    console.error(C.red("Missing GOOGLE_CLIENT_SECRET in environment. Refusing to use hardcoded credentials."));
     return null;
   }
 
