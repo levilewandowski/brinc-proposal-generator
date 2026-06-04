@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { XMLParser } from "fast-xml-parser";
+import { resolveRelationshipTarget } from "./opc-resolver.js";
 
 var XML_OPTS = { ignoreAttributes: false, attributeNamePrefix: "@_" };
 
@@ -236,15 +237,25 @@ async function validateRelationships(zip, parser, report, logger) {
       if (target.startsWith("http://") || target.startsWith("https://")) continue;
 
       report.relationships.total++;
-      var resolved = resolveRelPath(target, relPath);
-      if (!zip.file(resolved)) {
+      // Convert .rels file path to source part URI for correct OPC resolution
+      // e.g., "ppt/slides/_rels/slide1.xml.rels" → "/ppt/slides/slide1.xml"
+      // Package-level rels: "_rels/.rels" → "/"
+      var sourcePartUri;
+      if (relPath === "_rels/.rels") {
+        sourcePartUri = "/";
+      } else {
+        sourcePartUri = "/" + relPath.replace(/\/_rels\//g, "/").replace(/\.rels$/, "");
+      }
+      var resolved = resolveRelationshipTarget(sourcePartUri, target);
+      var resolvedEntry = resolved ? resolved.entryName : null;
+      if (!resolvedEntry || !zip.file(resolvedEntry)) {
         var rType = r["@_Type"] || "";
         var isCritical = isRenderCriticalRelType(rType);
         report.relationships.broken.push({
           relFile: relPath,
           rId: r["@_Id"],
           target: target,
-          resolved: resolved,
+          resolved: resolvedEntry || "unresolved",
           type: rType,
           typeShort: rType.split("/").pop() || "unknown",
           renderCritical: isCritical,
