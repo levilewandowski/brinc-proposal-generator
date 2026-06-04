@@ -120,22 +120,34 @@ export async function assemble(slideSources, token, logger) {
   // 4. Forensic media audit — inspect what actually landed in target ZIP
   logger.log("[ASM] === FORENSIC MEDIA AUDIT ===");
   var auditResults = [];
-  for (var ai = 0; ai < slideSources.length; ai++) {
-    var src = slideSources[ai];
-    if (src.source !== "canonical" || !src.resolvedFileId) continue;
-    var sZip = sourceZips[src.resolvedFileId].zip;
-    var audit = await auditSlideMedia(sZip, targetZip, "ppt/slides/slide1.xml", ai + 1, logger);
-    auditResults = auditResults.concat(audit);
-  }
-  var auditMissing = auditResults.filter(function(a) { return !a.exists; });
-  logger.log("[ASM] Audit: " + auditResults.length + " image refs, " + auditMissing.length + " missing");
-  if (auditMissing.length > 0) {
-    auditMissing.forEach(function(a) {
-      logger.log("[ASM]   MISSING: " + a.expected + " (slide " + a.slide + ", " + a.rId + ")");
-      if (a.foundCandidates.length > 0) {
-        logger.log("[ASM]     Candidates: " + a.foundCandidates.join(", "));
+  try {
+    for (var ai = 0; ai < slideSources.length; ai++) {
+      try {
+        var src = slideSources[ai];
+        if (src.source !== "canonical" || !src.resolvedFileId) continue;
+        var sZipEntry = sourceZips[src.resolvedFileId];
+        if (!sZipEntry || !sZipEntry.zip) {
+          logger.log("[ASM] Audit skip: no source ZIP for " + src.resolvedFileId.substring(0, 12));
+          continue;
+        }
+        var audit = await auditSlideMedia(sZipEntry.zip, targetZip, "ppt/slides/slide1.xml", ai + 1, logger);
+        auditResults = auditResults.concat(audit);
+      } catch (itemErr) {
+        logger.log("[ASM] FORENSIC_ERROR: slide=" + (ai + 1) + " error=" + (itemErr && itemErr.message ? itemErr.message : String(itemErr)));
       }
-    });
+    }
+    var auditMissing = auditResults.filter(function(a) { return !a.exists; });
+    logger.log("[ASM] Audit: " + auditResults.length + " image refs, " + auditMissing.length + " missing");
+    if (auditMissing.length > 0) {
+      auditMissing.forEach(function(a) {
+        logger.log("[ASM]   MISSING: " + a.expected + " (slide " + a.slide + ", " + a.rId + ")");
+        if (a.foundCandidates.length > 0) {
+          logger.log("[ASM]     Candidates: " + a.foundCandidates.join(", "));
+        }
+      });
+    }
+  } catch (auditErr) {
+    logger.log("[ASM] FORENSIC_FATAL: " + (auditErr && auditErr.message ? auditErr.message : String(auditErr)));
   }
 
   // 5. Build presentation.xml with all slides
@@ -232,36 +244,40 @@ async function auditSlideMedia(sourceZip, targetZip, slideFilePath, slideNum, lo
   });
 
   for (var i = 0; i < rels.length; i++) {
-    var r = rels[i];
-    var rId = r["@_Id"] || "";
-    var rType = r["@_Type"] || "";
-    var rTarget = r["@_Target"] || "";
+    try {
+      var r = rels[i];
+      var rId = r["@_Id"] || "";
+      var rType = r["@_Type"] || "";
+      var rTarget = r["@_Target"] || "";
 
-    // Only audit image relationships (these are the render-critical ones)
-    if (rType.indexOf("image") === -1) continue;
+      // Only audit image relationships (these are the render-critical ones)
+      if (rType.indexOf("image") === -1) continue;
 
-    // Resolve expected path using OPC
-    var resolved = resolveRelationshipTarget(slideUri, rTarget);
-    var expected = resolved ? resolved.entryName : null;
+      // Resolve expected path using OPC
+      var resolved = resolveRelationshipTarget(slideUri, rTarget);
+      var expected = resolved ? resolved.entryName : null;
 
-    // Check if expected path exists in target
-    var exists = expected ? !!targetZip.file(expected) : false;
+      // Check if expected path exists in target
+      var exists = expected ? !!targetZip.file(expected) : false;
 
-    // Find candidates: any media file in target with similar basename
-    var basename = expected ? expected.split("/").pop() : "";
-    var candidates = targetMediaFiles.filter(function(f) {
-      return f.indexOf(basename) !== -1 || basename.indexOf(f.split("/").pop()) !== -1;
-    });
+      // Find candidates: any media file in target with similar basename
+      var basename = expected ? expected.split("/").pop() : "";
+      var candidates = targetMediaFiles.filter(function(f) {
+        return f.indexOf(basename) !== -1 || basename.indexOf(f.split("/").pop()) !== -1;
+      });
 
-    results.push({
-      rId: rId,
-      slide: "slide" + slideNum,
-      relType: rType.split("/").pop(),
-      target: rTarget,
-      expected: expected,
-      exists: exists,
-      foundCandidates: candidates,
-    });
+      results.push({
+        rId: rId,
+        slide: "slide" + slideNum,
+        relType: rType.split("/").pop(),
+        target: rTarget,
+        expected: expected,
+        exists: exists,
+        foundCandidates: candidates,
+      });
+    } catch (relErr) {
+      logger.log("[ASM] FORENSIC_ERROR: slide=" + slideNum + " rId=" + (rels[i] && rels[i]["@_Id"] || "?") + " error=" + (relErr && relErr.message ? relErr.message : ""));
+    }
   }
 
   return results;
