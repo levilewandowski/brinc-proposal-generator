@@ -14,27 +14,11 @@ import { OpcResolver, resolveRelationshipTarget } from "./opc-resolver.js";
 var XML_OPTS = { ignoreAttributes: false, attributeNamePrefix: "@_" };
 var parser = new XMLParser(XML_OPTS);
 
-// Relationship types that reference parts we MUST copy for visual fidelity
-var MUST_COPY_REL_TYPES = {
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagram": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramColors": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramStyles": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramLayout": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramQuickStyle": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tags": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster": true,
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme": true,
-  "http://schemas.microsoft.com/office/2007/relationships/chartEx": true,
-  "http://schemas.microsoft.com/office/2007/relationships/chartColorStyle": true,
-  "http://schemas.microsoft.com/office/2007/relationships/chartStyle": true,
+// Relationship types to SKIP (external/harmless only)
+// Everything else gets copied — this is the key fix.
+var SKIP_REL_TYPES = {
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink": true,
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink": true,
 };
 
 /**
@@ -138,10 +122,10 @@ function enqueueDependencies(sourcePackageUri, relsText, queue, copied, logger) 
     var rTarget = r["@_Target"] || "";
     var rId = r["@_Id"] || "";
 
-    // Skip if not a type we need to copy
-    if (!MUST_COPY_REL_TYPES[rType]) continue;
-    // Skip external URLs
+    // Skip external URLs (http:// and https:// hyperlinks)
     if (rTarget.indexOf(":") !== -1 && (rTarget.startsWith("http://") || rTarget.startsWith("https://"))) continue;
+    // Skip known harmless types (external links, hyperlinks)
+    if (SKIP_REL_TYPES[rType]) continue;
 
     var resolved = resolveRelationshipTarget(sourcePackageUri, rTarget);
     if (resolved && resolved.entryName && !copied.has(resolved.entryName)) {

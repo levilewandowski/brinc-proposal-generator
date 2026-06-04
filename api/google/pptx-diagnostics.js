@@ -292,6 +292,7 @@ export default async function handler(req, res) {
         relationshipsBrokenCount: (vRel.broken || []).length,
         relationshipsRenderCritical: renderCritical,
         relationshipsRenderCriticalList: (vRel.broken || []).filter(function(b) { return b.renderCritical; }).map(function(b) { return { typeShort: b.typeShort, target: b.target, resolved: b.resolvedEntryName }; }),
+        relationshipsBrokenFull: (vRel.broken || []).map(function(b) { return { typeShort: b.typeShort, type: b.type, rId: b.rId, target: b.target, resolved: b.resolvedEntryName, sourcePart: b.sourcePart || b.relFile, renderCritical: b.renderCritical }; }),
         textRuns: (validation.editability || {}).textRuns || 0,
         shapes: (validation.editability || {}).shapes || 0,
         images: (validation.editability || {}).images || 0,
