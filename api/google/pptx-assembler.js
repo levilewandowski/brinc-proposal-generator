@@ -117,19 +117,40 @@ export async function assemble(slideSources, token, logger) {
     slideEntries.push({ slideNum: slideNum, sldId: sldId, rId: rId });
   }
 
-  // 4. Build presentation.xml with all slides
+  // 4. Forensic media audit — inspect what actually landed in target ZIP
+  logger.log("[ASM] === FORENSIC MEDIA AUDIT ===");
+  var auditResults = [];
+  for (var ai = 0; ai < slideSources.length; ai++) {
+    var src = slideSources[ai];
+    if (src.source !== "canonical" || !src.resolvedFileId) continue;
+    var sZip = sourceZips[src.resolvedFileId].zip;
+    var audit = await auditSlideMedia(sZip, targetZip, "ppt/slides/slide1.xml", ai + 1, logger);
+    auditResults = auditResults.concat(audit);
+  }
+  var auditMissing = auditResults.filter(function(a) { return !a.exists; });
+  logger.log("[ASM] Audit: " + auditResults.length + " image refs, " + auditMissing.length + " missing");
+  if (auditMissing.length > 0) {
+    auditMissing.forEach(function(a) {
+      logger.log("[ASM]   MISSING: " + a.expected + " (slide " + a.slide + ", " + a.rId + ")");
+      if (a.foundCandidates.length > 0) {
+        logger.log("[ASM]     Candidates: " + a.foundCandidates.join(", "));
+      }
+    });
+  }
+
+  // 5. Build presentation.xml with all slides
   await buildPresentationXml(targetZip, slideEntries);
 
-  // 5. Build presentation.xml.rels
+  // 6. Build presentation.xml.rels
   await buildPresentationRels(targetZip, slideEntries);
 
-  // 6. Update content types for all slide overrides
+  // 7. Update content types for all slide overrides
   await updateContentTypes(targetZip, slideCount);
 
-  // 7. Ensure content type defaults for all media extensions (PNG, JPG, etc.)
+  // 8. Ensure content type defaults for all media extensions (PNG, JPG, etc.)
   await ensureContentTypeDefaults(targetZip);
 
-  // 8. Generate buffer
+  // 9. Generate buffer
   logger.log("[ASM] Generating final PPTX with " + slideCount + " slide(s)");
   var buffer = await generatePptxBuffer(targetZip);
   logger.log("[ASM] Generated: " + buffer.length + " bytes (" + Math.round(buffer.length / 1024) + " KB)");
@@ -184,6 +205,66 @@ async function buildPresentationRels(zip, slideEntries) {
     '</Relationships>';
 
   zip.file("ppt/_rels/presentation.xml.rels", relsXml);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Forensic Media Audit — inspect what actually landed in target ZIP
+// ═══════════════════════════════════════════════════════════
+
+async function auditSlideMedia(sourceZip, targetZip, slideFilePath, slideNum, logger) {
+  var results = [];
+  var slideUri = "/" + slideFilePath;
+  var slideRelPath = slideFilePath.replace("ppt/slides/", "ppt/slides/_rels/").replace(".xml", ".xml.rels");
+
+  // Read slide rels
+  var relEntry = sourceZip.file(slideRelPath);
+  if (!relEntry) return results;
+
+  var relText = await relEntry.async("text");
+  var relDoc = parser.parse(relText);
+  var rels = relDoc["Relationships"] && relDoc["Relationships"]["Relationship"];
+  if (!rels) return results;
+  if (!Array.isArray(rels)) rels = [rels];
+
+  // Get all media entries in target ZIP for candidate matching
+  var targetMediaFiles = Object.keys(targetZip.files).filter(function(f) {
+    return f.startsWith("ppt/media/");
+  });
+
+  for (var i = 0; i < rels.length; i++) {
+    var r = rels[i];
+    var rId = r["@_Id"] || "";
+    var rType = r["@_Type"] || "";
+    var rTarget = r["@_Target"] || "";
+
+    // Only audit image relationships (these are the render-critical ones)
+    if (rType.indexOf("image") === -1) continue;
+
+    // Resolve expected path using OPC
+    var resolved = resolveRelationshipTarget(slideUri, rTarget);
+    var expected = resolved ? resolved.entryName : null;
+
+    // Check if expected path exists in target
+    var exists = expected ? !!targetZip.file(expected) : false;
+
+    // Find candidates: any media file in target with similar basename
+    var basename = expected ? expected.split("/").pop() : "";
+    var candidates = targetMediaFiles.filter(function(f) {
+      return f.indexOf(basename) !== -1 || basename.indexOf(f.split("/").pop()) !== -1;
+    });
+
+    results.push({
+      rId: rId,
+      slide: "slide" + slideNum,
+      relType: rType.split("/").pop(),
+      target: rTarget,
+      expected: expected,
+      exists: exists,
+      foundCandidates: candidates,
+    });
+  }
+
+  return results;
 }
 
 // ═══════════════════════════════════════════════════════════
