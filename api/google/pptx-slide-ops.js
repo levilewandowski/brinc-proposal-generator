@@ -270,23 +270,60 @@ var CONTENT_TYPE_DEFAULTS = {
 };
 
 // Ensure [Content_Types].xml has Default entries for all media extensions
-export async function ensureContentTypeDefaults(zip) {
+// Dynamically scans ppt/media/ for actual file extensions and injects missing defaults
+export async function ensureContentTypeDefaults(zip, logger) {
   var ctEntry = zip.file("[Content_Types].xml");
   if (!ctEntry) return;
   var ctText = await ctEntry.async("text");
   var changed = false;
 
-  Object.keys(CONTENT_TYPE_DEFAULTS).forEach(function(ext) {
+  // 1. Discover actual media extensions from files in ppt/media/ (skip directories)
+  var discoveredExts = {};
+  Object.keys(zip.files).forEach(function(path) {
+    if (path.startsWith("ppt/media/") && !path.endsWith("/")) {
+      var ext = path.split(".").pop().toLowerCase();
+      if (ext && ext !== path) discoveredExts[ext] = true;
+    }
+  });
+
+  // 2. Forensic audit logging
+  if (logger) {
+    logger.log("[OPS] === CONTENT TYPES AUDIT ===");
+    logger.log("[OPS] Media extensions discovered: " + Object.keys(discoveredExts).sort().join(", ") || "(none)");
+    logger.log("[OPS] Content type defaults present in [Content_Types].xml:");
+    Object.keys(CONTENT_TYPE_DEFAULTS).forEach(function(ext) {
+      var present = ctText.indexOf('Extension="' + ext + '"') !== -1;
+      logger.log("[OPS]   " + ext + "=" + (present ? CONTENT_TYPE_DEFAULTS[ext] : "(MISSING)"));
+    });
+  }
+
+  // 3. Inject missing defaults for discovered extensions
+  var missingDefaults = [];
+  Object.keys(discoveredExts).forEach(function(ext) {
     var pattern = 'Extension="' + ext + '"';
     if (ctText.indexOf(pattern) === -1) {
-      var insert = '  <Default Extension="' + ext + '" ContentType="' + CONTENT_TYPE_DEFAULTS[ext] + '"/>\n';
+      var contentType = CONTENT_TYPE_DEFAULTS[ext] || "application/octet-stream";
+      var insert = '  <Default Extension="' + ext + '" ContentType="' + contentType + '"/>\n';
       ctText = ctText.replace('</Types>', insert + '</Types>');
       changed = true;
+      missingDefaults.push(ext + "=" + contentType);
     }
   });
 
   if (changed) {
     zip.file("[Content_Types].xml", ctText);
+    if (logger) {
+      logger.log("[OPS] === CONTENT TYPE SUMMARY ===");
+      logger.log("[OPS] Media extensions found: " + Object.keys(discoveredExts).length);
+      logger.log("[OPS] Defaults injected: " + missingDefaults.length);
+      logger.log("[OPS] Injected: " + missingDefaults.join(", "));
+    }
+  } else {
+    if (logger) {
+      logger.log("[OPS] === CONTENT TYPE SUMMARY ===");
+      logger.log("[OPS] Media extensions found: " + Object.keys(discoveredExts).length);
+      logger.log("[OPS] Defaults missing: 0 (all present)");
+    }
   }
 }
 

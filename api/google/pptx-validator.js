@@ -117,12 +117,12 @@ async function validateContentTypes(zip, report, logger) {
   }
   var ctText = await ctEntry.async("text");
 
-  // Find all media extensions in the PPTX
+  // Find all media extensions in the PPTX (skip directory entries)
   var mediaExtensions = {};
   Object.keys(zip.files).forEach(function(path) {
-    if (path.startsWith("ppt/media/")) {
+    if (path.startsWith("ppt/media/") && !path.endsWith("/")) {
       var ext = path.split(".").pop().toLowerCase();
-      if (ext) mediaExtensions[ext] = true;
+      if (ext && ext !== path) mediaExtensions[ext] = true;
     }
   });
 

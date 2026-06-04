@@ -161,7 +161,7 @@ export async function assemble(slideSources, token, logger) {
   await updateContentTypes(targetZip, slideCount);
 
   // 8. Ensure content type defaults for all media extensions (PNG, JPG, etc.)
-  await ensureContentTypeDefaults(targetZip);
+  await ensureContentTypeDefaults(targetZip, logger);
 
   // 9. Generate buffer
   logger.log("[ASM] Generating final PPTX with " + slideCount + " slide(s)");
