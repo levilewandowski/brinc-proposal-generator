@@ -87,6 +87,45 @@ export default async function handler(req, res) {
     logger.log("Folder: " + (CANONICAL_COMPONENTS_FOLDER_ID ? "set" : "NOT_SET"));
     logger.log("Cache: " + (CANONICAL_CACHE_FOLDER_ID ? "set" : "NOT_SET"));
 
+    // ── Token validation + refresh ────────────────────────
+    logger.log("--- AUTH ---");
+    if (refreshToken) {
+      try {
+        var tokenCheck = await gapi(accessToken, "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + accessToken);
+        if (!tokenCheck.ok) {
+          logger.log("Token invalid (HTTP " + tokenCheck.status + "), refreshing...");
+          var refreshRes = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              refresh_token: refreshToken,
+              client_id: process.env.GOOGLE_CLIENT_ID || "",
+              client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
+              grant_type: "refresh_token",
+            }),
+          });
+          var refreshData = await refreshRes.json();
+          if (refreshData.access_token) {
+            accessToken = refreshData.access_token;
+            logger.log("Token refreshed successfully");
+          } else {
+            logger.log("Token refresh failed: " + (refreshData.error || "unknown"));
+            return sendJson(res, 401, {
+              ok: false, error: "AUTH_FAILED",
+              detail: "Token expired and refresh failed: " + (refreshData.error || "unknown"),
+              logs: logger.getLogs(),
+            });
+          }
+        } else {
+          logger.log("Token valid");
+        }
+      } catch (authErr) {
+        logger.log("Auth check error: " + (authErr && authErr.message ? authErr.message : ""));
+      }
+    } else {
+      logger.log("No refresh token — using access token as-is");
+    }
+
     // ── Assemble ──────────────────────────────────────────
     logger.log("--- ASSEMBLY ---");
     var asmStart = Date.now();
