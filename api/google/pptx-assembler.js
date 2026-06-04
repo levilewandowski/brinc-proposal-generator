@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import JSZip from "jszip";
+import { XMLParser } from "fast-xml-parser";
 import {
   downloadPptx,
   readSlideXml,
