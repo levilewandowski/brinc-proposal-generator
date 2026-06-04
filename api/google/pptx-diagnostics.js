@@ -324,6 +324,12 @@ export default async function handler(req, res) {
     var validation = result.validation || {};
     var vRel = validation.relationships || {};
     var renderCritical = vRel.renderCriticalCount || 0;
+    var xmlPass = validation.ok === true;
+    var mediaMissingZero = (validation.media || {}).missing === 0;
+    var brokenZero = (vRel.broken || []).length === 0;
+    var errorsZero = (validation.errors || []).length === 0;
+    var renderCriticalZero = renderCritical === 0;
+    var pass = xmlPass && renderCriticalZero;
     var response = {
       ok: true,
       timing: {
@@ -337,7 +343,15 @@ export default async function handler(req, res) {
         sizeKb: Math.round((result.sizeBytes || 0) / 1024),
       },
       validation: {
-        pass: (validation.ok === true && renderCritical === 0) || false,
+        pass: pass,
+        passReasons: {
+          xmlPass: xmlPass,
+          errorsZero: errorsZero,
+          mediaMissingZero: mediaMissingZero,
+          relationshipsBrokenZero: brokenZero,
+          renderCriticalZero: renderCriticalZero,
+          allConditionsMet: xmlPass && mediaMissingZero && brokenZero && errorsZero && renderCriticalZero,
+        },
         xmlPass: validation.ok || false,
         slideCount: (validation.structure || {}).slideCount || 0,
         mediaTotal: (validation.media || {}).total || 0,
@@ -352,6 +366,7 @@ export default async function handler(req, res) {
         images: (validation.editability || {}).images || 0,
         errors: (validation.errors || []).slice(0, 10),
       },
+      _rawValidation: validation,
       drive: uploadResult,
       visualRegression: visualRegression,
       relInventory: relInventory,
