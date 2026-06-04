@@ -16,6 +16,7 @@ import {
   gapi,
 } from "./pptx-slide-ops.js";
 import { copySlideWithDependencies } from "./pptx-slide-copy.js";
+import { resolveRelationshipTarget } from "./opc-resolver.js";
 import { validatePptx } from "./pptx-validator.js";
 
 var XML_OPTS = { ignoreAttributes: false, attributeNamePrefix: "@_" };
