@@ -320,6 +320,65 @@ export default async function handler(req, res) {
       logger.log("Skipped: no output presentation or cache folder");
     }
 
+    // ── Visual object audit (canonical vs generated) ──────
+    logger.log("--- VISUAL AUDIT ---");
+    var visualAudit = [];
+    try {
+      var JSZipModule2 = await import("jszip");
+      var JSZip2 = JSZipModule2.default || JSZipModule2;
+
+      for (var vi = 0; vi < modules.length; vi++) {
+        var mod = modules[vi];
+        var auditEntry = {
+          module: mod,
+          slideIndex: vi,
+          canonical: null,
+          generated: null,
+          diff: null,
+        };
+
+        // Count objects in generated slide
+        var genZip = await JSZip2.loadAsync(result.buffer);
+        var genSlidePath = "ppt/slides/slide" + (vi + 1) + ".xml";
+        var genSlideEntry = genZip.file(genSlidePath);
+        if (genSlideEntry) {
+          var genXml = await genSlideEntry.async("text");
+          auditEntry.generated = countSlideObjects(genXml);
+        }
+
+        // Count objects in canonical source slide
+        try {
+          var canonFolderFiles = await scanCanonicalFolderForAudit(CANONICAL_COMPONENTS_FOLDER_ID, accessToken, logger);
+          var canonMatch = canonFolderFiles.find(function(f) { return f.baseName === "canonical_" + mod; });
+          if (canonMatch) {
+            var canonBuf = await downloadPptxForAudit(canonMatch.id, accessToken);
+            var canonZip = await JSZip2.loadAsync(canonBuf);
+            var canonSlideEntry = canonZip.file("ppt/slides/slide1.xml");
+            if (canonSlideEntry) {
+              var canonXml = await canonSlideEntry.async("text");
+              auditEntry.canonical = countSlideObjects(canonXml);
+            }
+          }
+        } catch (canonErr) {
+          logger.log("Visual audit: canonical download failed for " + mod + ": " + (canonErr.message || ""));
+        }
+
+        // Compute diff
+        if (auditEntry.canonical && auditEntry.generated) {
+          auditEntry.diff = diffObjectCounts(auditEntry.canonical, auditEntry.generated);
+        }
+
+        visualAudit.push(auditEntry);
+        logger.log("Visual audit " + mod + ": canonical=" + (auditEntry.canonical ? auditEntry.canonical.total + " objs" : "N/A") +
+          " generated=" + (auditEntry.generated ? auditEntry.generated.total + " objs" : "N/A"));
+        if (auditEntry.diff && auditEntry.diff.missing.length > 0) {
+          logger.log("Visual audit " + mod + " MISSING: " + auditEntry.diff.missing.map(function(m) { return m.type + ":" + m.count; }).join(", "));
+        }
+      }
+    } catch (auditErr) {
+      logger.log("Visual audit error: " + (auditErr && auditErr.message ? auditErr.message : ""));
+    }
+
     // ── Build response ────────────────────────────────────
     var validation = result.validation || {};
     var vRel = validation.relationships || {};
@@ -369,6 +428,7 @@ export default async function handler(req, res) {
       _rawValidation: validation,
       drive: uploadResult,
       visualRegression: visualRegression,
+      visualAudit: visualAudit,
       relInventory: relInventory,
       typeSummary: typeSummary,
       logs: logger.getLogs(),
